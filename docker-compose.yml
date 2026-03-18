@@ -1,0 +1,50 @@
+services:
+
+  mongo:
+    image: mongo:7
+    restart: unless-stopped
+    environment:
+      MONGO_INITDB_DATABASE: gas_incident_platform
+    volumes:
+      - mongo_data:/data/db
+    ports:
+      - "27017:27017"
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    env_file:
+      - .env.docker
+    environment:
+      MONGODB_URI: mongodb://mongo:27017
+    volumes:
+      - uploads_data:/app/uploads
+    ports:
+      - "5020:5020"
+    depends_on:
+      mongo:
+        condition: service_healthy
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        VITE_API_URL: ""
+        VITE_WS_URL: ""
+    restart: unless-stopped
+    ports:
+      - "5021:80"
+    depends_on:
+      - backend
+
+volumes:
+  mongo_data:
+  uploads_data:

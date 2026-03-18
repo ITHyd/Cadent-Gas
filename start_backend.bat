@@ -1,0 +1,9 @@
+@echo off
+echo Starting Gas Incident Intelligence Backend...
+echo.
+echo Activating virtual environment...
+cd backend
+call venv\Scripts\activate.bat
+echo.
+echo Starting FastAPI server...
+python -m uvicorn main:app --reload --host 0.0.0.0 --port 8000
