@@ -1394,6 +1394,13 @@ class AgentOrchestrator:
             "matched_entry": kb_result.get("matched_entry") if kb_result else None,
             "all_matches": kb_result.get("all_matches", []) if kb_result else [],
         }
+        
+        # Debug logging for KB validation
+        logger.info(f"[{session_id}] KB Validation Result: verdict={kb_match_type}, "
+                   f"true_score={kb_result.get('true_kb_match', 0) if kb_result else 0:.3f}, "
+                   f"false_score={kb_result.get('false_kb_match', 0) if kb_result else 0:.3f}, "
+                   f"confidence={kb_result.get('confidence', 0) if kb_result else 0:.3f}, "
+                   f"has_matched_entry={bool(kb_result.get('matched_entry')) if kb_result else False}")
         structured_data["_risk_assessment"] = {
             "preliminary_score": round(risk_result.get("preliminary_risk_score", 0), 3) if risk_result else round(risk_score, 3),
             "kb_adjusted_score": round(risk_result.get("kb_adjusted_risk_score", 0), 3) if risk_result else round(risk_score, 3),

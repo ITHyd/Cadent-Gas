@@ -1,4 +1,4 @@
-﻿import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { MapContainer, TileLayer, Marker, Popup, Polyline, useMap } from 'react-leaflet';
 import L from 'leaflet';
@@ -7,9 +7,9 @@ import { formatUseCase } from '../utils/formatters';
 import { getIncident, addUserNote, updateUserNote, deleteUserNote, updateSmsPreference } from '../services/api';
 import { useAuth } from '../contexts/AuthContext';
 
-/* â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+/* ═══════════════════════════════════════════════════════════════════
    DESIGN TOKENS
-   â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• */
+   ═══════════════════════════════════════════════════════════════════ */
 const T = {
   bg: '#eaf2f9',
   card: '#ffffff',
@@ -56,9 +56,9 @@ const Card = ({ children, style, hoverable, ...props }) => {
   );
 };
 
-/* â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+/* ═══════════════════════════════════════════════════════════════════
    LEAFLET ICONS
-   â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• */
+   ═══════════════════════════════════════════════════════════════════ */
 delete L.Icon.Default.prototype._getIconUrl;
 L.Icon.Default.mergeOptions({
   iconRetinaUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-icon-2x.png',
@@ -86,7 +86,7 @@ const createAgentVehicleIcon = (name, etaMins) => L.divIcon({
       <div style="width:40px;height:40px;background:linear-gradient(135deg,#030304,#0d0d1a);
         border:3px solid white;border-radius:50%;box-shadow:0 3px 12px rgba(3,3,4,0.5);
         display:flex;align-items:center;justify-content:center;font-size:18px;
-        animation:vehicleBounce 2s ease-in-out infinite;">🚐</div>
+        animation:vehicleBounce 2s ease-in-out infinite;">🚗</div>
       ${etaMins ? `<div style="position:absolute;top:-8px;right:-16px;background:#030304;color:white;
         font-size:8px;font-weight:800;padding:2px 5px;border-radius:6px;white-space:nowrap;
         box-shadow:0 2px 6px rgba(79,70,229,0.4);font-family:-apple-system,sans-serif;">~${etaMins}m</div>` : ''}
@@ -109,9 +109,9 @@ const MapBoundsController = ({ points }) => {
   return null;
 };
 
-/* â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+/* ═══════════════════════════════════════════════════════════════════
    SKELETON LOADER
-   â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• */
+   ═══════════════════════════════════════════════════════════════════ */
 const SkeletonBlock = ({ w, h, r, style }) => (
   <div style={{
     width: w || '100%', height: h || '16px', borderRadius: r || '8px',
@@ -177,9 +177,9 @@ const SkeletonPage = () => (
   </div>
 );
 
-/* â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+/* ═══════════════════════════════════════════════════════════════════
    MAIN COMPONENT
-   â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• */
+   ═══════════════════════════════════════════════════════════════════ */
 const IncidentDetail = () => {
   const { incidentId } = useParams();
   const navigate = useNavigate();
@@ -211,7 +211,7 @@ const IncidentDetail = () => {
   // Toast
   const [toast, setToast] = useState(null);
 
-  /* â”€â”€ Data Fetching â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+  /* ── Data Fetching ───────────────────────────────────────────── */
   const fetchIncidentDetail = async (isRefresh = false) => {
     try {
       if (isRefresh) setRefreshing(true);
@@ -234,7 +234,7 @@ const IncidentDetail = () => {
   }, [incidentId]);
 
 
-  /* â”€â”€ Format Helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+  /* ── Format Helpers ──────────────────────────────────────────── */
   const formatDate = (ds) => {
     if (!ds) return '';
     return new Date(ds).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
@@ -256,7 +256,7 @@ const IncidentDetail = () => {
     return new Date(ds).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
   };
 
-  /* â”€â”€ Status / Outcome Helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+  /* ── Status / Outcome Helpers ────────────────────────────────── */
   const statusColors = {
     new: '#030304', submitted: '#0e7490', classifying: '#8DE971',
     in_progress: '#f59e0b', paused: '#f59e0b', analyzing: '#f59e0b',
@@ -275,15 +275,15 @@ const IncidentDetail = () => {
     emergency_dispatch: 'Emergency Dispatch', schedule_engineer: 'Engineer Scheduled',
     monitor: 'Monitoring', close_with_guidance: 'Closed with Guidance', false_report: 'No Action Required',
   };
-  const outcomeIcons = { emergency_dispatch: '🚨', schedule_engineer: '🔧', monitor: '👁️', close_with_guidance: '✅', false_report: '📋' };
+  const outcomeIcons = { emergency_dispatch: '🚨', schedule_engineer: '🔧', monitor: '👁️', close_with_guidance: '✓', false_report: '❌' };
 
   const getStatusColor = (s) => statusColors[s] || '#6b7280';
   const getStatusLabel = (s) => statusLabels[s] || s;
   const getOutcomeLabel = (o) => outcomeLabels[o] || o?.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()) || '';
   const isActive = (s) => ['new', 'submitted', 'in_progress', 'analyzing', 'pending_company_action', 'dispatched', 'emergency'].includes(s);
 
-  /* â”€â”€ Agent Helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
-  const getInitials = (n) => n ? n.split(' ').map(w => w[0]).join('').toUpperCase().slice(0, 2) : '??';
+  /* ── Agent Helpers ───────────────────────────────────────────── */
+  const getInitials = (n) => n ? n.split(' ').map(w => w[0]).join('').toUpperCase().slice(0, 2) : '👤';
 
   const agentStatusStyles = {
     ASSIGNED: { bg: '#ebf4fb', text: '#030304', dot: '#030304' },
@@ -308,17 +308,19 @@ const IncidentDetail = () => {
     return dists[a.location] || { km: 10.0, mins: 30 };
   };
 
-  /* â”€â”€ Timeline Helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+  /* ── Timeline Helpers ────────────────────────────────────────── */
   const getTimelineAvatar = (step) => {
     const cat = step.category || 'system';
     if (step.completed) return { icon: '✓', bg: '#d1fae5', border: '#6ee7b7', color: '#059669' };
     if (step.in_progress) {
-      const m = { system: { icon: '⚙️', bg: '#ebf4fb', border: '#b4ccdf', color: '#030304' },
-                  engineer: { icon: '👷', bg: '#ebf4fb', border: '#c4b5fd', color: '#8DE971' },
-                  ai: { icon: '🤖', bg: '#e5f4f1', border: '#8ec7bf', color: '#8DE971' } };
+      const m = {
+        system: { icon: '⚙️', bg: '#ebf4fb', border: '#b4ccdf', color: '#030304' },
+        engineer: { icon: '👷', bg: '#ebf4fb', border: '#c4b5fd', color: '#8DE971' },
+        ai: { icon: '🤖', bg: '#e5f4f1', border: '#8ec7bf', color: '#8DE971' }
+      };
       return m[cat] || m.system;
     }
-    return { icon: '●', bg: '#f9fafb', border: '#d7e3ee', color: '#d1d5db' };
+    return { icon: '○', bg: '#f9fafb', border: '#d7e3ee', color: '#d1d5db' };
   };
 
   const getActionTag = (step) => {
@@ -327,21 +329,21 @@ const IncidentDetail = () => {
     return auto.includes(step.step) ? { label: 'Auto', bg: '#f1f5f9', color: '#64748b' } : { label: 'Manual', bg: '#ebf4fb', color: '#030304' };
   };
 
-  /* â”€â”€ Communication Helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+  /* ── Communication Helpers ───────────────────────────────────── */
   const getCommAvatar = (entry) => {
     const msg = (entry.message || '').toLowerCase();
-    if (msg.includes('ai') || msg.includes('assess') || msg.includes('classif') || msg.includes('outcome')) return { icon: '⚙️', label: 'System', bg: '#f1f5f9', color: '#475569' };
+    if (msg.includes('ai') || msg.includes('assess') || msg.includes('classif') || msg.includes('outcome')) return { icon: '🤖', label: 'System', bg: '#f1f5f9', color: '#475569' };
     if (msg.includes('engineer') || msg.includes('agent') || msg.includes('assign') || msg.includes('dispatch')) return { icon: '👷', label: 'Engineer', bg: '#ebf4fb', color: '#8DE971' };
     return { icon: '⚙️', label: 'System', bg: '#f1f5f9', color: '#475569' };
   };
 
-  /* ── Toast Helper ──────────────────────────────────────────────────── */
+  /* -- Toast Helper ---------------------------------------------------- */
   const showToastMsg = (message, type = 'success') => {
     setToast({ message, type });
     setTimeout(() => setToast(null), 3200);
   };
 
-  /* ── Add Note Handler ──────────────────────────────────────────────── */
+  /* -- Add Note Handler ------------------------------------------------ */
   const handleAddNote = async () => {
     if (!userNote.trim()) return;
     try {
@@ -358,7 +360,7 @@ const IncidentDetail = () => {
     }
   };
 
-  /* ── Edit Note Handler ─────────────────────────────────────────────── */
+  /* -- Edit Note Handler ----------------------------------------------- */
   const handleEditNote = async () => {
     if (!editNoteText.trim() || !editingNote) return;
     try {
@@ -375,7 +377,7 @@ const IncidentDetail = () => {
     }
   };
 
-  /* ── Delete Note Handler ────────────────────────────────────────────── */
+  /* -- Delete Note Handler ---------------------------------------------- */
   const handleDeleteNote = async (noteId) => {
     try {
       setDeletingNoteId(noteId);
@@ -389,7 +391,7 @@ const IncidentDetail = () => {
     }
   };
 
-  /* ── SMS Preference Handler ────────────────────────────────────────── */
+  /* -- SMS Preference Handler ------------------------------------------ */
   const handleToggleSms = async () => {
     if (!incident) return;
     const currentPref = incident.structured_data?._sms_preference;
@@ -406,17 +408,17 @@ const IncidentDetail = () => {
     }
   };
 
-  /* ── Download Report Handler ───────────────────────────────────────── */
+  /* -- Download Report Handler ----------------------------------------- */
   const handleDownloadReport = () => {
     if (!incident) return;
 
     const lines = [];
-    const hr = '─'.repeat(60);
+    const hr = '-'.repeat(60);
     const addSection = (title) => { lines.push(''); lines.push(hr); lines.push(`  ${title.toUpperCase()}`); lines.push(hr); };
 
-    lines.push('═'.repeat(60));
+    lines.push('-'.repeat(60));
     lines.push('  INCIDENT REPORT');
-    lines.push('═'.repeat(60));
+    lines.push('-'.repeat(60));
     lines.push(`  Reference: REF-${shortRef}`);
     lines.push(`  Incident ID: ${incident.incident_id}`);
     lines.push(`  Generated: ${new Date().toLocaleString('en-GB')}`);
@@ -517,9 +519,9 @@ const IncidentDetail = () => {
     }
 
     lines.push('');
-    lines.push('═'.repeat(60));
+    lines.push('-'.repeat(60));
     lines.push('  END OF REPORT');
-    lines.push('═'.repeat(60));
+    lines.push('-'.repeat(60));
 
     const content = lines.join('\n');
     const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
@@ -533,7 +535,7 @@ const IncidentDetail = () => {
     URL.revokeObjectURL(url);
   };
 
-  /* â”€â”€ Loading & Error â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+  /* ── Loading & Error ─────────────────────────────────────────── */
   if (loading) return <SkeletonPage />;
 
   if (error || !incident) {
@@ -552,14 +554,14 @@ const IncidentDetail = () => {
     );
   }
 
-  /* â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+  /* ═══════════════════════════════════════════════════════════════
      DERIVED STATE
-     â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• */
+     ═══════════════════════════════════════════════════════════════ */
   const timeline = incident.timeline || [];
   const sla = incident.sla || {};
   const active = isActive(incident.status);
   const incidentType = formatUseCase(incident.incident_type || incident.classified_use_case || 'Incident');
-  const shortRef = incident.incident_id ? incident.incident_id.slice(-8).toUpperCase() : '';
+  const shortRef = incident.incident_id ? incident.incident_id.replace(/^INC_/i, '').toUpperCase() : '';
   const agent = incident.assigned_agent;
   const statusHistory = incident.status_history || [];
   const statusColor = getStatusColor(incident.status);
@@ -568,20 +570,20 @@ const IncidentDetail = () => {
   const agentCoords = agent?.geo_coordinates ? [agent.geo_coordinates.lat, agent.geo_coordinates.lng] : null;
   const incidentCoords = incident.latitude ? [incident.latitude, incident.longitude] : null;
 
-  /* â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+  /* ═══════════════════════════════════════════════════════════════
      RENDER
-     â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• */
+     ═══════════════════════════════════════════════════════════════ */
   return (
     <div ref={printRef} className="incident-detail-page" style={{ minHeight: '100vh', background: T.bg, fontFamily: T.font }}>
 
-      {/* â•â•â• STICKY TOP BAR â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• */}
+      {/* ═══ STICKY TOP BAR ═══════════════════════════════════════ */}
       <div className="no-print" style={{
         background: 'rgba(255,255,255,0.88)', backdropFilter: 'blur(12px)', WebkitBackdropFilter: 'blur(12px)',
         borderBottom: '1px solid rgba(229,231,235,0.6)',
         padding: '12px 0', position: 'sticky', top: 0, zIndex: 50,
       }}>
         <div style={{ maxWidth: '1280px', margin: '0 auto', padding: '0 24px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap', minWidth: 0 }}>
             <button onClick={() => navigate('/my-reports')} style={{
               background: 'none', border: 'none', cursor: 'pointer', fontSize: '0.95rem',
               color: T.primary, fontWeight: '600', display: 'flex', alignItems: 'center', gap: '4px', padding: '6px 0',
@@ -590,6 +592,7 @@ const IncidentDetail = () => {
             <span style={{
               fontFamily: 'monospace', fontSize: '0.9rem', color: T.primary,
               background: T.primaryLight, padding: '4px 10px', borderRadius: '6px', fontWeight: '600',
+              whiteSpace: 'nowrap', overflow: 'visible', flexShrink: 0,
             }}>REF-{shortRef}</span>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
@@ -615,14 +618,14 @@ const IncidentDetail = () => {
               color: refreshing ? T.primary : T.textMuted, cursor: refreshing ? 'default' : 'pointer',
               transition: 'all 0.2s',
             }}>
-              <span style={{ display: 'inline-block', animation: refreshing ? 'spin 1s linear infinite' : 'none' }}>↻</span>
+              <span style={{ display: 'inline-block', animation: refreshing ? 'spin 1s linear infinite' : 'none' }}>🔄</span>
               {' '}{refreshing ? 'Refreshing...' : 'Refresh'}
             </button>
           </div>
         </div>
       </div>
 
-      {/* â•â•â• HERO SECTION â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• */}
+      {/* ═══ HERO SECTION ════════════════════════════════════════ */}
       <div style={{ background: T.card, boxShadow: '0 1px 3px rgba(0,0,0,0.04)', padding: '28px 0' }}>
         <div style={{ maxWidth: '1280px', margin: '0 auto', padding: '0 24px' }}>
           <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '24px', flexWrap: 'wrap' }}>
@@ -669,14 +672,14 @@ const IncidentDetail = () => {
         </div>
       </div>
 
-      {/* â•â•â• MAIN GRID â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• */}
+      {/* ═══ MAIN GRID ═══════════════════════════════════════════ */}
       <div style={{ maxWidth: '1280px', margin: '0 auto', padding: '24px' }}>
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 380px', gap: '24px', alignItems: 'start' }}>
 
-          {/* â•â•â• LEFT COLUMN â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• */}
+          {/* ═══ LEFT COLUMN ═══════════════════════════════════════ */}
           <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
 
-            {/* â”€â”€ Engineer Card â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
+            {/* ── Engineer Card ────────────────────────────────────── */}
             {agent ? (
               <Card hoverable>
                 {/* ETA Banner */}
@@ -694,7 +697,7 @@ const IncidentDetail = () => {
                         <span style={{ fontSize: '0.85rem', fontWeight: '600', color: 'rgba(255,255,255,0.55)' }}>({eta.km} km away)</span>
                       </div>
                     </div>
-                    <div style={{ fontSize: '2rem', animation: 'vehicleBounce 2s ease-in-out infinite' }}>🚐</div>
+                    <div style={{ fontSize: '2rem', animation: 'vehicleBounce 2s ease-in-out infinite' }}>🚗</div>
                   </div>
                 )}
                 <div style={{ padding: '24px' }}>
@@ -773,7 +776,7 @@ const IncidentDetail = () => {
                         <span style={{ fontSize: '0.85rem', fontWeight: '600', color: 'rgba(255,255,255,0.55)' }}>(calculating...)</span>
                       </div>
                     </div>
-                    <div style={{ fontSize: '1.75rem', animation: 'vehicleBounce 2s ease-in-out infinite' }}>🚐</div>
+                    <div style={{ fontSize: '1.75rem', animation: 'vehicleBounce 2s ease-in-out infinite' }}>🚗</div>
                   </div>
                 )}
                 <div style={{ padding: '24px', display: 'flex', gap: '14px', alignItems: 'center' }}>
@@ -782,7 +785,7 @@ const IncidentDetail = () => {
                     background: 'linear-gradient(135deg, #030304, #0d0d1a)',
                     display: 'flex', alignItems: 'center', justifyContent: 'center',
                     color: 'white', fontSize: '1.25rem', flexShrink: 0,
-                  }}>👷</div>
+                  }}>✓</div>
                   <div>
                     <div style={{ fontSize: '1rem', fontWeight: '700', color: T.text }}>Engineer Dispatched</div>
                     <div style={{ fontSize: '0.9rem', color: T.textMuted }}>A qualified engineer is on the way.</div>
@@ -795,7 +798,7 @@ const IncidentDetail = () => {
                 <Card>
                   <div style={{ height: '3px', background: 'linear-gradient(90deg, #030304, #8DE971, #030304)', backgroundSize: '200% 100%', animation: 'shimmer 2s linear infinite' }} />
                   <div style={{ padding: '32px', textAlign: 'center' }}>
-                    <div style={{ fontSize: '2.5rem', marginBottom: '12px' }}>👷</div>
+                    <div style={{ fontSize: '2.5rem', marginBottom: '12px' }}>🔍</div>
                     <div style={{ fontSize: '1.15rem', fontWeight: '700', color: T.text, marginBottom: '6px' }}>Finding an Engineer</div>
                     <p style={{ fontSize: '0.9rem', color: T.textMuted, margin: '0 0 16px', lineHeight: 1.6 }}>We're matching you with the best available engineer nearby.</p>
                     <div style={{
@@ -811,7 +814,7 @@ const IncidentDetail = () => {
               )
             )}
 
-            {/* â”€â”€ Customer Notifications Card â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
+            {/* ── Customer Notifications Card ──────────────────────── */}
             {(incident.customer_notifications || []).length > 0 && (() => {
               const notifications = [...incident.customer_notifications].sort(
                 (a, b) => new Date(b.created_at) - new Date(a.created_at)
@@ -897,15 +900,14 @@ const IncidentDetail = () => {
                       padding: '4px 12px', borderRadius: T.radiusPill,
                       background: incident.structured_data.severity === 'critical' ? '#fef2f2'
                         : incident.structured_data.severity === 'high' ? '#fef2f2'
-                        : incident.structured_data.severity === 'medium' ? '#fffbeb' : '#ecfdf5',
+                          : incident.structured_data.severity === 'medium' ? '#fffbeb' : '#ecfdf5',
                       color: incident.structured_data.severity === 'critical' ? '#7f1d1d'
                         : incident.structured_data.severity === 'high' ? '#dc2626'
-                        : incident.structured_data.severity === 'medium' ? '#b45309' : '#047857',
-                      border: `1px solid ${
-                        incident.structured_data.severity === 'critical' ? '#fca5a5'
+                          : incident.structured_data.severity === 'medium' ? '#b45309' : '#047857',
+                      border: `1px solid ${incident.structured_data.severity === 'critical' ? '#fca5a5'
                         : incident.structured_data.severity === 'high' ? '#fca5a5'
-                        : incident.structured_data.severity === 'medium' ? '#fde68a' : '#a7f3d0'
-                      }`,
+                          : incident.structured_data.severity === 'medium' ? '#fde68a' : '#a7f3d0'
+                        }`,
                     }}>
                       Severity: {incident.structured_data.severity.charAt(0).toUpperCase() + incident.structured_data.severity.slice(1)}
                     </span>
@@ -914,7 +916,7 @@ const IncidentDetail = () => {
               </Card>
             )}
 
-            {/* â”€â”€ Description & Assessment Card â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
+            {/* ── Description & Assessment Card ─────────────────────── */}
             <Card hoverable style={{ padding: '24px' }}>
               <h3 style={{ fontSize: '0.75rem', fontWeight: '700', color: T.textMuted, textTransform: 'uppercase', letterSpacing: '0.06em', margin: '0 0 12px' }}>Description</h3>
               <p style={{ fontSize: '0.95rem', color: '#334155', lineHeight: 1.7, margin: 0 }}>
@@ -936,7 +938,7 @@ const IncidentDetail = () => {
                 })()}
               </p>
 
-              {/* â”€â”€ Chatbot-Extracted Assessment â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
+              {/* ── Chatbot-Extracted Assessment ─────────────────────── */}
               {false && incident.structured_data && Object.keys(incident.structured_data).length > 0 && (() => {
                 const sd = incident.structured_data;
                 // Labels for known structured_data keys
@@ -1046,7 +1048,7 @@ const IncidentDetail = () => {
               )}
             </Card>
 
-            {/* â”€â”€ Live Map â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
+            {/* ── Live Map ─────────────────────────────────────────── */}
             {hasMapData && (
               <>
                 <button onClick={() => setShowMap(!showMap)} className="no-print" style={{
@@ -1133,12 +1135,39 @@ const IncidentDetail = () => {
               </>
             )}
 
-            {/* â”€â”€ Incident Details â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
+            {/* ── Incident Details ─────────────────────────────────── */}
             <Card hoverable style={{ padding: '24px' }}>
-              <h3 style={{ fontSize: '0.75rem', fontWeight: '700', color: T.textMuted, textTransform: 'uppercase', letterSpacing: '0.06em', margin: '0 0 14px' }}>Incident Details</h3>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '14px' }}>
+                <h3 style={{ fontSize: '0.75rem', fontWeight: '700', color: T.textMuted, textTransform: 'uppercase', letterSpacing: '0.06em', margin: '0' }}>Incident Details</h3>
+                {(() => {
+                  const kbValidation = incident.structured_data?._kb_validation || incident.kb_validation_details;
+                  if (!kbValidation || !kbValidation.verdict || kbValidation.verdict === 'unknown') return null;
+
+                  const isTrue = kbValidation.verdict === 'true';
+                  const confidence = kbValidation.confidence || 0;
+                  const percentage = Math.round(confidence * 100);
+
+                  return (
+                    <span style={{
+                      padding: '6px 14px',
+                      borderRadius: '8px',
+                      fontSize: '0.85rem',
+                      fontWeight: '700',
+                      background: isTrue ? '#dcfce7' : '#fef3c7',
+                      color: isTrue ? '#166534' : '#92400e',
+                      border: isTrue ? '1px solid #86efac' : '1px solid #fcd34d',
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '6px'
+                    }}>
+                      {isTrue ? 'True Incident' : 'False Report'} - {percentage}%
+                    </span>
+                  );
+                })()}
+              </div>
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0' }}>
                 {[
-                  { label: 'Reference', value: `REF-${shortRef}`, mono: true },
+                  { label: 'Reference', value: `REF-${shortRef}`, mono: true, fullWidth: false },
                   { label: 'Type', value: incidentType },
                   { label: 'Status', value: getStatusLabel(incident.status) },
                   { label: 'Outcome', value: getOutcomeLabel(incident.outcome) || 'Pending' },
@@ -1155,14 +1184,17 @@ const IncidentDetail = () => {
                     <div style={{ fontSize: '0.75rem', color: T.textFaint, fontWeight: '600', marginBottom: '2px' }}>{row.label}</div>
                     <div style={{
                       fontSize: '0.9rem', fontWeight: '600', color: T.text,
-                      ...(row.mono ? { fontFamily: 'monospace', letterSpacing: '0.03em' } : {}),
+                      whiteSpace: 'normal',
+                      wordWrap: 'break-word',
+                      overflowWrap: 'anywhere',
+                      ...(row.mono ? { fontFamily: 'monospace', letterSpacing: '0.02em', fontSize: '0.85rem' } : {}),
                     }}>{row.value}</div>
                   </div>
                 ))}
               </div>
             </Card>
 
-            {/* â”€â”€ Communication Panel â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
+            {/* ── Communication Panel ──────────────────────────────── */}
             {statusHistory.length > 0 && (
               <Card hoverable>
                 <button onClick={() => setShowComm(!showComm)} style={{
@@ -1319,7 +1351,7 @@ const IncidentDetail = () => {
                                         style={{ width: '100%', height: '120px', objectFit: 'cover', display: 'block' }}
                                       />
                                     ) : (
-                                      <div style={{ width: '100%', height: '120px', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#f1f5f9', fontSize: '2rem' }}>📄</div>
+                                      <div style={{ width: '100%', height: '120px', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#f1f5f9', fontSize: '2rem' }}>📎</div>
                                     )}
                                     <div style={{ padding: '6px 8px', fontSize: '0.72rem', color: T.textMuted, fontWeight: '600', background: '#f8fafc' }}>
                                       {m.filename || 'Document'}
@@ -1344,14 +1376,14 @@ const IncidentDetail = () => {
               </Card>
             )}
 
-            {/* â”€â”€ Quick Actions â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
+            {/* ── Quick Actions ─────────────────────────────────────── */}
             <div className="no-print" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '12px' }}>
               <Card hoverable style={{ cursor: 'pointer' }}>
                 <button onClick={() => setShowAddDetails(true)} style={{
                   width: '100%', padding: '16px', background: 'none', border: 'none', cursor: 'pointer',
                   display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '6px',
                 }}>
-                  <span style={{ fontSize: '1.4rem' }}>📝</span>
+                  <span style={{ fontSize: '1.4rem' }}>➕</span>
                   <span style={{ fontSize: '0.82rem', fontWeight: '700', color: T.text }}>Add Details</span>
                 </button>
               </Card>
@@ -1360,7 +1392,7 @@ const IncidentDetail = () => {
                   width: '100%', padding: '16px', background: 'none', border: 'none', cursor: 'pointer',
                   display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '6px',
                 }}>
-                  <span style={{ fontSize: '1.4rem' }}>📄</span>
+                  <span style={{ fontSize: '1.4rem' }}>📥</span>
                   <span style={{ fontSize: '0.82rem', fontWeight: '700', color: T.text }}>Download Report</span>
                 </button>
               </Card>
@@ -1370,7 +1402,7 @@ const IncidentDetail = () => {
                   display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '6px',
                   opacity: smsUpdating ? 0.6 : 1,
                 }}>
-                  <span style={{ fontSize: '1.4rem' }}>{incident.structured_data?._sms_preference?.enabled ? '🔔' : '📱'}</span>
+                  <span style={{ fontSize: '1.4rem' }}>{incident.structured_data?._sms_preference?.enabled ? '🔔' : '🔕'}</span>
                   <span style={{ fontSize: '0.82rem', fontWeight: '700', color: incident.structured_data?._sms_preference?.enabled ? T.green : T.text }}>
                     {smsUpdating ? 'Updating...' : incident.structured_data?._sms_preference?.enabled ? 'SMS On' : 'SMS Updates'}
                   </span>
@@ -1378,7 +1410,7 @@ const IncidentDetail = () => {
               </Card>
             </div>
 
-            {/* ── SMS Notification Banner ──────────────────────────────── */}
+            {/* -- SMS Notification Banner -------------------------------- */}
             {incident.structured_data?._sms_preference?.enabled && (
               <div className="no-print" style={{
                 padding: '12px 16px', borderRadius: T.radiusSm,
@@ -1386,7 +1418,7 @@ const IncidentDetail = () => {
                 display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px',
               }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                  <span style={{ fontSize: '1.1rem' }}>🔔</span>
+                  <span style={{ fontSize: '1.1rem' }}>✅</span>
                   <div>
                     <div style={{ fontSize: '0.84rem', fontWeight: '700', color: '#047857' }}>SMS Notifications Active</div>
                     <div style={{ fontSize: '0.78rem', color: '#059669' }}>
@@ -1402,7 +1434,7 @@ const IncidentDetail = () => {
               </div>
             )}
 
-            {/* ── User Notes ──────────────────────────────────────────── */}
+            {/* -- User Notes -------------------------------------------- */}
             {(incident.structured_data?._user_notes || []).length > 0 && (
               <Card hoverable style={{ padding: '20px 24px' }}>
                 <h3 style={{ fontSize: '0.75rem', fontWeight: '700', color: T.textMuted, textTransform: 'uppercase', letterSpacing: '0.06em', margin: '0 0 12px' }}>
@@ -1415,7 +1447,7 @@ const IncidentDetail = () => {
                       border: `1px solid ${T.borderLight}`,
                     }}>
                       {editingNote?.note_id === n.note_id ? (
-                        /* ── Inline Edit Mode ── */
+                        /* -- Inline Edit Mode -- */
                         <div>
                           <textarea
                             value={editNoteText}
@@ -1444,7 +1476,7 @@ const IncidentDetail = () => {
                           </div>
                         </div>
                       ) : (
-                        /* ── Display Mode ── */
+                        /* -- Display Mode -- */
                         <div>
                           <p style={{ margin: '0 0 4px', fontSize: '0.88rem', color: '#334155', lineHeight: 1.5 }}>{n.note}</p>
                           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
@@ -1460,7 +1492,7 @@ const IncidentDetail = () => {
                                 }}
                                 onMouseEnter={e => { e.currentTarget.style.background = '#eff6ff'; }}
                                 onMouseLeave={e => { e.currentTarget.style.background = 'none'; }}
-                              ><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>Edit</button>
+                              ><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" /><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" /></svg>Edit</button>
                               <button
                                 onClick={() => handleDeleteNote(n.note_id)}
                                 disabled={deletingNoteId === n.note_id}
@@ -1473,7 +1505,7 @@ const IncidentDetail = () => {
                                 }}
                                 onMouseEnter={e => { e.currentTarget.style.background = '#fef2f2'; }}
                                 onMouseLeave={e => { e.currentTarget.style.background = 'none'; }}
-                              ><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>Delete</button>
+                              ><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6" /><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" /></svg>Delete</button>
                             </div>
                           </div>
                         </div>
@@ -1485,7 +1517,7 @@ const IncidentDetail = () => {
             )}
           </div>
 
-          {/* â•â•â• RIGHT COLUMN â€” Lifecycle Timeline â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• */}
+          {/* ═══ RIGHT COLUMN — Lifecycle Timeline ════════════════ */}
           <div style={{ position: 'sticky', top: '5rem' }}>
             <Card>
               {/* Header */}
@@ -1610,8 +1642,8 @@ const IncidentDetail = () => {
         </div>
       </div>
 
-      {/* â•â•â• ANIMATIONS + PRINT STYLES â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• */}
-      {/* ── Add Details Modal ──────────────────────────────────────── */}
+      {/* ═══ ANIMATIONS + PRINT STYLES ═══════════════════════════ */}
+      {/* -- Add Details Modal ---------------------------------------- */}
       {showAddDetails && (
         <div onClick={() => { setShowAddDetails(false); setUserNote(''); }} style={{
           position: 'fixed', inset: 0, zIndex: 9998,
@@ -1660,7 +1692,7 @@ const IncidentDetail = () => {
         </div>
       )}
 
-      {/* ── Toast ──────────────────────────────────────────────────── */}
+      {/* -- Toast ---------------------------------------------------- */}
       {toast && (
         <div style={{
           position: 'fixed', right: '22px', bottom: '22px', zIndex: 9999,
@@ -1724,5 +1756,6 @@ const IncidentDetail = () => {
 };
 
 export default IncidentDetail;
+
 
 

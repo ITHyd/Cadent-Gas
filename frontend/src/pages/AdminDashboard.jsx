@@ -898,7 +898,7 @@ const AdminDashboard = () => {
           <div style={{ flex: 1, minWidth: 0 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
               <span style={{ fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', fontWeight: 700, color: '#345473', fontSize: '0.82rem' }}>
-                {request.incident_id?.slice(0, 12)}
+                {request.incident_id?.replace(/^INC_/i, '').toUpperCase()}
               </span>
               <span style={{
                 padding: '2px 7px', borderRadius: '999px', fontSize: '0.7rem', fontWeight: 700,
@@ -1059,7 +1059,7 @@ const AdminDashboard = () => {
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '8px' }}>
                   <div style={{ minWidth: 0 }}>
                     <div style={{ fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', fontWeight: 800, color: '#345473', fontSize: '0.82rem' }}>
-                      {incident.incident_id?.slice(0, 12)}
+                      {incident.incident_id?.replace(/^INC_/i, '').toUpperCase()}
                     </div>
                     <div style={{ marginTop: '3px', color: '#0f172a', fontSize: '0.9rem', fontWeight: 700 }}>
                       {formatCategoryLabel(incident.incident_type || incident.classified_use_case || 'unclassified')}
@@ -1408,7 +1408,7 @@ const AdminDashboard = () => {
                           <tr key={incident.incident_id} onClick={() => handleIncidentRowClick(incident)} style={{ cursor: 'pointer' }}>
                             <td>
                               <span style={{ fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', fontWeight: 700, color: '#345473' }}>
-                                {incident.incident_id?.slice(0, 8)}...
+                                {incident.incident_id?.replace(/^INC_/i, '').toUpperCase()}
                               </span>
                             </td>
                             <td>{(incident.incident_type || incident.classified_use_case || 'N/A').replaceAll('_', ' ')}</td>
@@ -2120,14 +2120,7 @@ const AdminDashboard = () => {
                         {inc.description || 'No description available'}
                       </p>
 
-                      {/* Type badges */}
-                      <div style={{ marginBottom: '12px', display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-                        {inc.incident_type && (
-                          <span style={{ fontSize: '0.74rem', padding: '2px 8px', borderRadius: '999px', background: '#e0f2fe', color: '#075985', fontWeight: 600 }}>
-                            {inc.incident_type.replace(/_/g, ' ')}
-                          </span>
-                        )}
-                      </div>
+
 
                       {/* Assessment Details */}
                       {sdEntries.length > 0 && (
@@ -2187,179 +2180,179 @@ const AdminDashboard = () => {
                     )}
 
                     {/* KB Validation */}
-                    {kbVal && (
-                      <div className="panel-soft" style={{ padding: '12px 14px', borderRadius: '12px' }}>
-                        {sectionTitle('KB Validation Result')}
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '10px' }}>
-                          <span style={{
-                            padding: '4px 12px', borderRadius: '999px', fontSize: '0.82rem', fontWeight: 700,
-                            background: kbVal.verdict === 'true' ? '#ecfdf5' : kbVal.verdict === 'false' ? '#fef2f2' : '#fff7ed',
-                            color: kbVal.verdict === 'true' ? '#047857' : kbVal.verdict === 'false' ? '#b91c1c' : '#b45309',
-                            border: `1px solid ${kbVal.verdict === 'true' ? '#bbf7d0' : kbVal.verdict === 'false' ? '#fecaca' : '#fed7aa'}`,
-                          }}>
-                            {kbVal.verdict === 'true' ? 'TRUE INCIDENT' : kbVal.verdict === 'false' ? 'FALSE POSITIVE' : 'UNKNOWN'}
-                          </span>
-                          {kbVal.confidence != null && (
-                            <span style={{ fontSize: '0.78rem', color: '#64748b' }}>
-                              Confidence: <strong>{(kbVal.confidence * 100).toFixed(0)}%</strong>
+                    {kbVal && kbVal.verdict !== 'unknown' && (() => {
+                      // Calculate max scores from all_matches array
+                      const allMatches = kbVal.all_matches || [];
+                      const trueMatches = allMatches.filter(m => m.kb_type === 'true');
+                      const falseMatches = allMatches.filter(m => m.kb_type === 'false');
+
+                      const maxTrueScore = trueMatches.length > 0 ? Math.max(...trueMatches.map(m => m.score || 0)) : 0;
+                      const maxFalseScore = falseMatches.length > 0 ? Math.max(...falseMatches.map(m => m.score || 0)) : 0;
+
+                      return (
+                        <div className="panel-soft" style={{ padding: '12px 14px', borderRadius: '12px' }}>
+                          {sectionTitle('KB Validation Result')}
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '10px' }}>
+                            <span style={{
+                              padding: '4px 12px', borderRadius: '999px', fontSize: '0.82rem', fontWeight: 700,
+                              background: kbVal.verdict === 'true' ? '#ecfdf5' : '#fef2f2',
+                              color: kbVal.verdict === 'true' ? '#047857' : '#b91c1c',
+                              border: `1px solid ${kbVal.verdict === 'true' ? '#bbf7d0' : '#fecaca'}`,
+                            }}>
+                              {kbVal.verdict === 'true' ? 'TRUE INCIDENT' : 'FALSE REPORT'}
                             </span>
-                          )}
-                        </div>
-                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '6px 16px', fontSize: '0.82rem' }}>
-                          {kbVal.true_score != null && (
+                            {kbVal.confidence != null && (
+                              <span style={{ fontSize: '0.78rem', color: '#64748b' }}>
+                                Confidence: <strong>{(kbVal.confidence * 100).toFixed(0)}%</strong>
+                              </span>
+                            )}
+                          </div>
+                          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '6px 16px', fontSize: '0.82rem' }}>
                             <div>
                               <span style={{ color: '#64748b' }}>True KB Score:</span>{' '}
-                              <strong style={{ color: '#047857' }}>{(kbVal.true_score * 100).toFixed(0)}%</strong>
+                              <strong style={{ color: '#047857' }}>{(maxTrueScore * 100).toFixed(0)}%</strong>
                             </div>
-                          )}
-                          {kbVal.false_score != null && (
                             <div>
                               <span style={{ color: '#64748b' }}>False KB Score:</span>{' '}
-                              <strong style={{ color: '#b91c1c' }}>{(kbVal.false_score * 100).toFixed(0)}%</strong>
+                              <strong style={{ color: '#b91c1c' }}>{(maxFalseScore * 100).toFixed(0)}%</strong>
                             </div>
+                          </div>
+                          {kbVal.explanation && (
+                            <p style={{ margin: '8px 0 0', fontSize: '0.82rem', color: '#475569', background: '#f8fafc', padding: '8px 10px', borderRadius: '8px', lineHeight: 1.5 }}>
+                              {kbVal.explanation}
+                            </p>
                           )}
-                          {kbVal.matched_kb_id && (
-                            <div style={{ gridColumn: '1 / -1' }}>
-                              <span style={{ color: '#64748b' }}>Matched KB:</span>{' '}
-                              <strong>{kbVal.matched_kb_id}</strong>
+
+                          {/* All Matched KB Entries - Expandable List */}
+                          {kbVal.all_matches && kbVal.all_matches.length > 0 && (
+                            <div style={{ marginTop: '12px' }}>
+                              <div style={{
+                                fontSize: '0.76rem',
+                                fontWeight: 700,
+                                color: '#475569',
+                                textTransform: 'uppercase',
+                                letterSpacing: '0.04em',
+                                marginBottom: '8px'
+                              }}>
+                                All Matched KB Entries ({kbVal.all_matches.length})
+                              </div>
+                              <div style={{ display: 'grid', gap: '6px' }}>
+                                {kbVal.all_matches.map((match, idx) => {
+                                  const isExpanded = expandedKbEntry === match.kb_id;
+                                  const isTrue = match.kb_type === 'true';
+                                  const isBest = match.kb_id === kbVal.matched_kb_id;
+
+                                  return (
+                                    <div key={match.kb_id} style={{
+                                      border: `1px solid ${isTrue ? '#bbf7d0' : '#fecaca'}`,
+                                      borderRadius: '8px',
+                                      overflow: 'hidden',
+                                      background: isBest ? (isTrue ? '#f0fdf4' : '#fef2f2') : '#ffffff'
+                                    }}>
+                                      {/* Clickable Header */}
+                                      <div
+                                        onClick={() => setExpandedKbEntry(isExpanded ? null : match.kb_id)}
+                                        style={{
+                                          padding: '10px 12px',
+                                          cursor: 'pointer',
+                                          display: 'flex',
+                                          alignItems: 'center',
+                                          justifyContent: 'space-between',
+                                          background: isExpanded ? (isTrue ? '#f0fdf4' : '#fef2f2') : 'transparent',
+                                          transition: 'background 0.2s'
+                                        }}
+                                      >
+                                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flex: 1 }}>
+                                          <span style={{
+                                            fontSize: '0.8rem',
+                                            fontWeight: 700,
+                                            color: isTrue ? '#047857' : '#b91c1c',
+                                            fontFamily: 'monospace'
+                                          }}>
+                                            {match.kb_id}
+                                          </span>
+                                          {isBest && (
+                                            <span style={{
+                                              fontSize: '0.7rem',
+                                              fontWeight: 700,
+                                              padding: '2px 6px',
+                                              borderRadius: '4px',
+                                              background: isTrue ? '#047857' : '#b91c1c',
+                                              color: '#ffffff'
+                                            }}>
+                                              BEST MATCH
+                                            </span>
+                                          )}
+                                          <span style={{
+                                            fontSize: '0.76rem',
+                                            color: '#64748b',
+                                            marginLeft: 'auto'
+                                          }}>
+                                            {(match.score * 100).toFixed(0)}% match
+                                          </span>
+                                        </div>
+                                        <span style={{
+                                          fontSize: '1rem',
+                                          color: '#94a3b8',
+                                          marginLeft: '8px',
+                                          transform: isExpanded ? 'rotate(180deg)' : 'rotate(0deg)',
+                                          transition: 'transform 0.2s'
+                                        }}>
+                                          ▼
+                                        </span>
+                                      </div>
+
+                                      {/* Expandable Content */}
+                                      {isExpanded && (
+                                        <div style={{
+                                          padding: '12px',
+                                          borderTop: `1px solid ${isTrue ? '#bbf7d0' : '#fecaca'}`,
+                                          background: isTrue ? '#f0fdf4' : '#fef2f2',
+                                          display: 'grid',
+                                          gap: '10px',
+                                          fontSize: '0.84rem'
+                                        }}>
+                                          {match.incident_type && (
+                                            <div>
+                                              <span style={{ color: '#64748b', fontWeight: 600 }}>Type:</span>{' '}
+                                              <strong style={{ color: '#1e293b' }}>{match.incident_type.replace(/_/g, ' ')}</strong>
+                                            </div>
+                                          )}
+                                          {match.description && (
+                                            <div>
+                                              <span style={{ color: '#64748b', fontWeight: 600 }}>Description:</span>
+                                              <div style={{ color: '#475569', marginTop: '4px', lineHeight: 1.5 }}>{match.description}</div>
+                                            </div>
+                                          )}
+                                          {match.outcome && (
+                                            <div>
+                                              <span style={{ color: '#64748b', fontWeight: 600 }}>Outcome:</span>{' '}
+                                              <strong style={{ color: '#1e293b' }}>{match.outcome.replace(/_/g, ' ')}</strong>
+                                            </div>
+                                          )}
+                                          {match.resolution_summary && (
+                                            <div>
+                                              <span style={{ color: '#64748b', fontWeight: 600 }}>Resolution:</span>
+                                              <div style={{ color: '#475569', marginTop: '4px', lineHeight: 1.5 }}>{match.resolution_summary}</div>
+                                            </div>
+                                          )}
+                                          {match.reason && (
+                                            <div>
+                                              <span style={{ color: '#64748b', fontWeight: 600 }}>Reason:</span>
+                                              <div style={{ color: '#475569', marginTop: '4px', lineHeight: 1.5 }}>{match.reason}</div>
+                                            </div>
+                                          )}
+                                        </div>
+                                      )}
+                                    </div>
+                                  );
+                                })}
+                              </div>
                             </div>
                           )}
                         </div>
-                        {kbVal.explanation && (
-                          <p style={{ margin: '8px 0 0', fontSize: '0.82rem', color: '#475569', background: '#f8fafc', padding: '8px 10px', borderRadius: '8px', lineHeight: 1.5 }}>
-                            {kbVal.explanation}
-                          </p>
-                        )}
-
-                        {/* All Matched KB Entries - Expandable List */}
-                        {kbVal.all_matches && kbVal.all_matches.length > 0 && (
-                          <div style={{ marginTop: '12px' }}>
-                            <div style={{
-                              fontSize: '0.76rem',
-                              fontWeight: 700,
-                              color: '#475569',
-                              textTransform: 'uppercase',
-                              letterSpacing: '0.04em',
-                              marginBottom: '8px'
-                            }}>
-                              All Matched KB Entries ({kbVal.all_matches.length})
-                            </div>
-                            <div style={{ display: 'grid', gap: '6px' }}>
-                              {kbVal.all_matches.map((match, idx) => {
-                                const isExpanded = expandedKbEntry === match.kb_id;
-                                const isTrue = match.kb_type === 'true';
-                                const isBest = match.kb_id === kbVal.matched_kb_id;
-
-                                return (
-                                  <div key={match.kb_id} style={{
-                                    border: `1px solid ${isTrue ? '#bbf7d0' : '#fecaca'}`,
-                                    borderRadius: '8px',
-                                    overflow: 'hidden',
-                                    background: isBest ? (isTrue ? '#f0fdf4' : '#fef2f2') : '#ffffff'
-                                  }}>
-                                    {/* Clickable Header */}
-                                    <div
-                                      onClick={() => setExpandedKbEntry(isExpanded ? null : match.kb_id)}
-                                      style={{
-                                        padding: '10px 12px',
-                                        cursor: 'pointer',
-                                        display: 'flex',
-                                        alignItems: 'center',
-                                        justifyContent: 'space-between',
-                                        background: isExpanded ? (isTrue ? '#f0fdf4' : '#fef2f2') : 'transparent',
-                                        transition: 'background 0.2s'
-                                      }}
-                                    >
-                                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flex: 1 }}>
-                                        <span style={{
-                                          fontSize: '0.8rem',
-                                          fontWeight: 700,
-                                          color: isTrue ? '#047857' : '#b91c1c',
-                                          fontFamily: 'monospace'
-                                        }}>
-                                          {match.kb_id}
-                                        </span>
-                                        {isBest && (
-                                          <span style={{
-                                            fontSize: '0.7rem',
-                                            fontWeight: 700,
-                                            padding: '2px 6px',
-                                            borderRadius: '4px',
-                                            background: isTrue ? '#047857' : '#b91c1c',
-                                            color: '#ffffff'
-                                          }}>
-                                            BEST MATCH
-                                          </span>
-                                        )}
-                                        <span style={{
-                                          fontSize: '0.76rem',
-                                          color: '#64748b',
-                                          marginLeft: 'auto'
-                                        }}>
-                                          {(match.score * 100).toFixed(0)}% match
-                                        </span>
-                                      </div>
-                                      <span style={{
-                                        fontSize: '1rem',
-                                        color: '#94a3b8',
-                                        marginLeft: '8px',
-                                        transform: isExpanded ? 'rotate(180deg)' : 'rotate(0deg)',
-                                        transition: 'transform 0.2s'
-                                      }}>
-                                        ▼
-                                      </span>
-                                    </div>
-
-                                    {/* Expandable Content */}
-                                    {isExpanded && (
-                                      <div style={{
-                                        padding: '12px',
-                                        borderTop: `1px solid ${isTrue ? '#bbf7d0' : '#fecaca'}`,
-                                        background: isTrue ? '#f0fdf4' : '#fef2f2',
-                                        display: 'grid',
-                                        gap: '10px',
-                                        fontSize: '0.84rem'
-                                      }}>
-                                        {match.incident_type && (
-                                          <div>
-                                            <span style={{ color: '#64748b', fontWeight: 600 }}>Type:</span>{' '}
-                                            <strong style={{ color: '#1e293b' }}>{match.incident_type.replace(/_/g, ' ')}</strong>
-                                          </div>
-                                        )}
-                                        {match.description && (
-                                          <div>
-                                            <span style={{ color: '#64748b', fontWeight: 600 }}>Description:</span>
-                                            <div style={{ color: '#475569', marginTop: '4px', lineHeight: 1.5 }}>{match.description}</div>
-                                          </div>
-                                        )}
-                                        {match.outcome && (
-                                          <div>
-                                            <span style={{ color: '#64748b', fontWeight: 600 }}>Outcome:</span>{' '}
-                                            <strong style={{ color: '#1e293b' }}>{match.outcome.replace(/_/g, ' ')}</strong>
-                                          </div>
-                                        )}
-                                        {match.resolution_summary && (
-                                          <div>
-                                            <span style={{ color: '#64748b', fontWeight: 600 }}>Resolution:</span>
-                                            <div style={{ color: '#475569', marginTop: '4px', lineHeight: 1.5 }}>{match.resolution_summary}</div>
-                                          </div>
-                                        )}
-                                        {match.reason && (
-                                          <div>
-                                            <span style={{ color: '#64748b', fontWeight: 600 }}>Reason:</span>
-                                            <div style={{ color: '#475569', marginTop: '4px', lineHeight: 1.5 }}>{match.reason}</div>
-                                          </div>
-                                        )}
-                                      </div>
-                                    )}
-                                  </div>
-                                );
-                              })}
-                            </div>
-                          </div>
-                        )}
-                      </div>
-                    )}
+                      );
+                    })()}
 
                     {/* Risk Breakdown */}
                     {/* Resolution Info */}
@@ -2412,15 +2405,15 @@ const AdminDashboard = () => {
                             </span>
                           </div>
                         )}
-                        {inc.kb_match_type && (
+                        {inc.kb_match_type && inc.kb_match_type !== 'unknown' && (
                           <div>
                             <span style={{ color: '#64748b' }}>KB Verdict:</span>{' '}
-                            <strong style={{ color: inc.kb_match_type === 'true' ? '#047857' : inc.kb_match_type === 'false' ? '#b91c1c' : '#b45309' }}>
-                              {inc.kb_match_type === 'true' ? 'True Incident' : inc.kb_match_type === 'false' ? 'False Positive' : 'Unknown'}
+                            <strong style={{ color: inc.kb_match_type === 'true' ? '#047857' : '#b91c1c' }}>
+                              {inc.kb_match_type === 'true' ? 'True Incident' : 'False Report'}
                             </strong>
                           </div>
                         )}
-                        {inc.kb_similarity_score != null && (
+                        {inc.kb_similarity_score != null && inc.kb_match_type !== 'unknown' && (
                           <div><span style={{ color: '#64748b' }}>KB Similarity:</span> <strong>{(inc.kb_similarity_score * 100).toFixed(0)}%</strong></div>
                         )}
                         <div>
@@ -2436,7 +2429,6 @@ const AdminDashboard = () => {
                           <div><span style={{ color: '#64748b' }}>SLA:</span> <strong>{inc.sla_hours}h</strong></div>
                         )}
                         <div><span style={{ color: '#64748b' }}>Created:</span> <strong>{formatDateTime(inc.created_at)}</strong></div>
-                        {inc.completed_at && <div><span style={{ color: '#64748b' }}>Completed:</span> <strong>{formatDateTime(inc.completed_at)}</strong></div>}
                       </div>
                     </div>
 
@@ -2532,45 +2524,32 @@ const AdminDashboard = () => {
                 </div>
 
                 {/* KB Validation Review Panel */}
-                {inc.kb_match_type && inc.kb_match_type !== 'admin_confirmed' && (() => {
+                {inc.kb_match_type && inc.kb_match_type !== 'admin_confirmed' && inc.kb_match_type !== 'unknown' && (() => {
                   const kbDetails = inc.kb_validation_details || kbVal || {};
                   const rawVerdict = (kbDetails.verdict || inc.kb_match_type || '').toString().toLowerCase();
-                  const normalizedVerdict = ['true', 'false'].includes(rawVerdict) ? rawVerdict : 'unknown';
-                  const modelConfidence = kbDetails.confidence ?? kbDetails.match_confidence ?? inc.kb_similarity_score ?? 0;
-                  const explicitTrue = kbDetails.true_kb_match;
-                  const explicitFalse = kbDetails.false_kb_match;
-                  const hasExplicitSplit =
-                    normalizedVerdict === 'unknown'
-                    && kbDetails.explicit_split === true
-                    && typeof explicitTrue === 'number'
-                    && typeof explicitFalse === 'number'
-                    && explicitTrue > 0
-                    && explicitFalse > 0;
-                  let trueScore = 0;
-                  let falseScore = 0;
-                  if (hasExplicitSplit) {
-                    trueScore = Math.round(explicitTrue * 100);
-                    falseScore = Math.round(explicitFalse * 100);
-                  } else if (normalizedVerdict === 'true') {
-                    trueScore = Math.round(((typeof explicitTrue === 'number' ? explicitTrue : modelConfidence) || 0) * 100);
-                  } else if (normalizedVerdict === 'false') {
-                    falseScore = Math.round(((typeof explicitFalse === 'number' ? explicitFalse : modelConfidence) || 0) * 100);
-                  }
+                  const normalizedVerdict = ['true', 'false'].includes(rawVerdict) ? rawVerdict : null;
+
+                  if (!normalizedVerdict) return null;
+
+                  // Calculate max scores from all_matches array
+                  const allMatches = kbDetails.all_matches || [];
+                  const trueMatches = allMatches.filter(m => m.kb_type === 'true');
+                  const falseMatches = allMatches.filter(m => m.kb_type === 'false');
+
+                  const maxTrueScore = trueMatches.length > 0 ? Math.max(...trueMatches.map(m => m.score || 0)) : 0;
+                  const maxFalseScore = falseMatches.length > 0 ? Math.max(...falseMatches.map(m => m.score || 0)) : 0;
+
+                  let trueScore = Math.round(maxTrueScore * 100);
+                  let falseScore = Math.round(maxFalseScore * 100);
+
                   trueScore = Math.max(0, Math.min(100, trueScore));
                   falseScore = Math.max(0, Math.min(100, falseScore));
-                  const unknownScore = Math.max(0, 100 - trueScore - falseScore);
+
                   const explanation = kbDetails.explanation || '';
-                  const panelBg = normalizedVerdict === 'true' ? '#f0fdf4' : normalizedVerdict === 'false' ? '#fef2f2' : '#f8fafc';
-                  const panelBorder = normalizedVerdict === 'true' ? '#bbf7d0' : normalizedVerdict === 'false' ? '#fecaca' : '#cbd5e1';
-                  const verdictColor = normalizedVerdict === 'true' ? '#047857' : normalizedVerdict === 'false' ? '#b91c1c' : '#64748b';
-                  const verdictLabel =
-                    normalizedVerdict === 'true'
-                      ? 'Likely Valid Incident'
-                      : normalizedVerdict === 'false'
-                        ? 'Likely False Report'
-                        : hasExplicitSplit
-                          ? 'Split Model Signal'
-                          : 'Awaiting Admin Confirmation';
+                  const panelBorder = normalizedVerdict === 'true' ? '#bbf7d0' : '#fecaca';
+                  const verdictColor = normalizedVerdict === 'true' ? '#047857' : '#b91c1c';
+                  const verdictLabel = normalizedVerdict === 'true' ? 'Likely Valid Incident' : 'Likely False Report';
+
                   return (
                     <div style={{ padding: '12px 20px', borderTop: `2px solid ${panelBorder}`, background: '#ffffff' }}>
                       <div style={{ fontSize: '0.78rem', fontWeight: 800, color: '#475569', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: '8px' }}>
@@ -2584,14 +2563,7 @@ const AdminDashboard = () => {
                       <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', marginBottom: '10px', flexWrap: 'wrap' }}>
                         <div style={{ fontSize: '0.88rem', fontWeight: 700, color: '#047857', padding: '8px 16px', background: '#ecfdf5', borderRadius: '8px', border: '1px solid #bbf7d0' }}>True {trueScore}%</div>
                         <div style={{ fontSize: '0.88rem', fontWeight: 700, color: '#b91c1c', padding: '8px 16px', background: '#fef2f2', borderRadius: '8px', border: '1px solid #fecaca' }}>False {falseScore}%</div>
-                        <div style={{ fontSize: '0.88rem', fontWeight: 700, color: '#64748b', padding: '8px 16px', background: '#f8fafc', borderRadius: '8px', border: '1px solid #e2e8f0' }}>Unknown {unknownScore}%</div>
                       </div>
-
-                      {normalizedVerdict === 'unknown' && !hasExplicitSplit && (
-                        <div style={{ fontSize: '0.78rem', color: '#64748b', fontWeight: 600, marginBottom: '10px' }}>
-                          Awaiting admin confirmation
-                        </div>
-                      )}
 
                       {explanation && (
                         <div style={{ fontSize: '0.78rem', color: '#475569', fontStyle: 'italic', marginBottom: '10px', lineHeight: 1.4 }}>

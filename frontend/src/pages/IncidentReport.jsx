@@ -167,7 +167,7 @@ const IncidentReport = () => {
             <div style={{ flex: 1, minWidth: '160px' }}>
               <div style={{ fontSize: '0.82rem', color: '#5f738a', fontWeight: 600, marginBottom: '6px' }}>Reference ID</div>
               <div style={{ fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', fontWeight: 700, fontSize: '0.95rem', color: '#030304' }}>
-                REF-{submittedId?.slice(-8).toUpperCase()}
+                REF-{submittedId?.replace(/^INC_/i, '').toUpperCase()}
               </div>
             </div>
             {classifiedUseCase && (
@@ -256,12 +256,12 @@ const IncidentReport = () => {
                           display: 'inline-block', padding: '4px 12px', borderRadius: '8px', fontSize: '0.82rem', fontWeight: 600,
                           background: kbMatch.outcome === 'emergency_dispatch' ? '#fee2e2'
                             : kbMatch.outcome === 'schedule_engineer' ? '#fef3c7'
-                            : kbMatch.outcome === 'advisory_issued' ? '#e0f2fe'
-                            : '#f1f5f9',
+                              : kbMatch.outcome === 'advisory_issued' ? '#e0f2fe'
+                                : '#f1f5f9',
                           color: kbMatch.outcome === 'emergency_dispatch' ? '#991b1b'
                             : kbMatch.outcome === 'schedule_engineer' ? '#92400e'
-                            : kbMatch.outcome === 'advisory_issued' ? '#030304'
-                            : '#475569',
+                              : kbMatch.outcome === 'advisory_issued' ? '#030304'
+                                : '#475569',
                         }}>
                           {kbMatch.outcome?.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())}
                         </span>

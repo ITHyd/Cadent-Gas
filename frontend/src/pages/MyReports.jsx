@@ -24,7 +24,14 @@ const MyReports = () => {
 
   useEffect(() => {
     fetchIncidents();
-  }, []);
+
+    // Auto-refresh every 30 seconds
+    const interval = setInterval(() => {
+      fetchIncidents();
+    }, 30000);
+
+    return () => clearInterval(interval);
+  }, [userId, tenantId]);
 
   const fetchIncidents = async () => {
     try {
@@ -345,9 +352,26 @@ const MyReports = () => {
               <p className="page-subheading">Track incident progress, estimated resolution, and dispatch status in one place.</p>
             </div>
 
-            <a href="/dashboard" className="secondary-btn" style={{ alignSelf: 'center' }}>
-              Back to Dashboard
-            </a>
+            <div style={{ display: 'flex', gap: '10px', alignSelf: 'center' }}>
+              <button
+                onClick={fetchIncidents}
+                className="secondary-btn"
+                disabled={loading}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  opacity: loading ? 0.6 : 1,
+                  cursor: loading ? 'not-allowed' : 'pointer'
+                }}
+              >
+                <span style={{ fontSize: '1rem' }}>🔄</span>
+                {loading ? 'Refreshing...' : 'Refresh'}
+              </button>
+              <a href="/dashboard" className="secondary-btn">
+                Back to Dashboard
+              </a>
+            </div>
           </div>
 
           <div style={{ marginTop: '18px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px', flexWrap: 'wrap' }}>
@@ -438,7 +462,7 @@ const MyReports = () => {
                           />
                         )}
                         <span style={{ fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', fontWeight: 700, fontSize: '0.82rem', color: '#37526c' }}>
-                          REF-{incident.incident_id?.slice(-8).toUpperCase()}
+                          REF-{incident.incident_id?.replace(/^INC_/i, '').toUpperCase()}
                         </span>
                       </div>
 
@@ -503,18 +527,17 @@ const MyReports = () => {
                         marginBottom: '6px',
                         background: incident.structured_data.severity === 'critical' ? '#fef2f2'
                           : incident.structured_data.severity === 'high' ? '#fef2f2'
-                          : incident.structured_data.severity === 'medium' ? '#fffbeb'
-                          : '#ecfdf5',
+                            : incident.structured_data.severity === 'medium' ? '#fffbeb'
+                              : '#ecfdf5',
                         color: incident.structured_data.severity === 'critical' ? '#7f1d1d'
                           : incident.structured_data.severity === 'high' ? '#dc2626'
-                          : incident.structured_data.severity === 'medium' ? '#b45309'
-                          : '#047857',
-                        border: `1px solid ${
-                          incident.structured_data.severity === 'critical' ? '#fca5a5'
+                            : incident.structured_data.severity === 'medium' ? '#b45309'
+                              : '#047857',
+                        border: `1px solid ${incident.structured_data.severity === 'critical' ? '#fca5a5'
                           : incident.structured_data.severity === 'high' ? '#fca5a5'
-                          : incident.structured_data.severity === 'medium' ? '#fde68a'
-                          : '#a7f3d0'
-                        }`,
+                            : incident.structured_data.severity === 'medium' ? '#fde68a'
+                              : '#a7f3d0'
+                          }`,
                       }}>
                         Severity: {incident.structured_data.severity.charAt(0).toUpperCase() + incident.structured_data.severity.slice(1)}
                       </span>

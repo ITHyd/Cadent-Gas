@@ -1226,6 +1226,9 @@ class KBService:
                     "description": true_match.get("description", ""),
                     "outcome": true_match.get("outcome", ""),
                     "resolution_summary": true_match.get("resolution_summary", ""),
+                    "root_cause": true_match.get("root_cause", ""),
+                    "actions_taken": true_match.get("actions_taken", ""),
+                    "tags": true_match.get("tags", []),
                     "reason": true_match.get("root_cause", "")
                 }
         elif false_score > true_score and false_score > 0.6:
@@ -1241,6 +1244,9 @@ class KBService:
                     "description": false_match.get("actual_issue", ""),
                     "outcome": "false_positive",
                     "resolution_summary": false_match.get("resolution", ""),
+                    "actual_issue": false_match.get("actual_issue", ""),
+                    "false_positive_reason": false_match.get("false_positive_reason", ""),
+                    "tags": false_match.get("tags", []),
                     "reason": false_match.get("false_positive_reason", "")
                 }
         else:

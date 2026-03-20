@@ -1472,13 +1472,17 @@ class IncidentService:
             List of incidents
         """
         # Statuses that mean the workflow is still incomplete / paused — hide from reports
-        _INCOMPLETE_STATUSES = {
-            IncidentStatus.NEW,
-            IncidentStatus.IN_PROGRESS,
-            IncidentStatus.PAUSED,
-            IncidentStatus.CLASSIFYING,
-            IncidentStatus.WAITING_INPUT,
-            IncidentStatus.ANALYZING,
+        # Statuses to SHOW in My Reports (user-facing completed/submitted reports)
+        _VISIBLE_STATUSES = {
+            IncidentStatus.SUBMITTED,
+            IncidentStatus.PENDING_COMPANY_ACTION,
+            IncidentStatus.IN_PROGRESS,  # Incidents being monitored after workflow completion
+            IncidentStatus.DISPATCHED,
+            IncidentStatus.RESOLVED,
+            IncidentStatus.COMPLETED,
+            IncidentStatus.EMERGENCY,
+            IncidentStatus.FALSE_REPORT,
+            IncidentStatus.CLOSED,
         }
 
         logger.info(f"🔍 GET_USER_INCIDENTS called: user_id={user_id}, tenant_id={tenant_id}")
@@ -1493,12 +1497,14 @@ class IncidentService:
                 continue
             if tenant_id is not None and incident.tenant_id != tenant_id:
                 continue
-            # Skip incomplete / paused — they are not finished reports
-            if incident.status in _INCOMPLETE_STATUSES:
+            
+            # Only show incidents in visible statuses (submitted reports, not in-progress workflows)
+            if incident.status not in _VISIBLE_STATUSES:
                 logger.info(
-                    f"   ⏸ Skipping incomplete: {incident.incident_id} (status={incident.status.value})"
+                    f"   ⏸ Skipping non-visible status: {incident.incident_id} (status={incident.status.value})"
                 )
                 continue
+            
             incidents.append(incident)
             logger.info(f"   ✅ Match found: {incident.incident_id}")
 

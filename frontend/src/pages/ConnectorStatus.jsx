@@ -481,7 +481,7 @@ const ConnectorStatus = () => {
                     </td>
                     <td style={S.td}><EventStatusBadge status={evt.status} /></td>
                     <td style={{ ...S.td, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', fontSize: '0.78rem' }}>
-                      {evt.incident_id ? `${evt.incident_id.slice(0, 10)}...` : '-'}
+                      {evt.incident_id ? evt.incident_id.replace(/^INC_/i, '').toUpperCase() : '-'}
                     </td>
                     <td style={{ ...S.td, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', fontSize: '0.78rem' }}>
                       {evt.external_id || '-'}
