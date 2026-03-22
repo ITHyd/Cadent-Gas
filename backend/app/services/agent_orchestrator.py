@@ -1739,6 +1739,7 @@ class AgentOrchestrator:
                 "Incident Logged - Safety Guidance Provided\n\n"
                 "Thank you for reporting this concern. Based on your responses, "
                 "this appears to be a low-risk situation that can be managed with proper precautions.\n\n"
+                "ℹ️ This appears to be a false alarm.\n\n"
                 f"Your incident has been logged for our records. Reference ID: {incident_id}\n\n"
                 "Safety recommendations:\n"
                 "- Ensure all areas are well-ventilated\n"

@@ -1,14 +1,11 @@
-import { useEffect, useRef, useState } from 'react';
-import { useParams, useLocation, useNavigate } from 'react-router-dom';
-import { connectWebSocket } from '../services/websocket';
-import { transcribeAudio } from '../services/api';
-import ChatMessage from '../components/ChatMessage';
-import QuestionInput from '../components/QuestionInput';
-import UploadInput from '../components/UploadInput';
-import LiveVoiceChat from '../components/LiveVoiceChat';
-import WorkflowVisualization from '../components/WorkflowVisualization';
-import { useAuth } from '../contexts/AuthContext';
-import ProfileDropdown from '../components/ProfileDropdown';
+import { useEffect, useRef, useState } from "react";
+import { useParams, useLocation, useNavigate } from "react-router-dom";
+import { connectWebSocket } from "../services/websocket";
+import ChatMessage from "../components/ChatMessage";
+import QuestionInput from "../components/QuestionInput";
+import WorkflowVisualization from "../components/WorkflowVisualization";
+import { useAuth } from "../contexts/AuthContext";
+import ProfileDropdown from "../components/ProfileDropdown";
 
 const AgentChat = () => {
   const { user } = useAuth();
@@ -19,15 +16,10 @@ const AgentChat = () => {
 
   const [messages, setMessages] = useState([]);
   const [currentAction, setCurrentAction] = useState(null);
-  const [sessionId, setSessionId] = useState('');
+  const [sessionId, setSessionId] = useState("");
   const [isComplete, setIsComplete] = useState(false);
   const [isConnected, setIsConnected] = useState(false);
   const [isTyping, setIsTyping] = useState(false);
-
-  // Voice mode state
-  const [voiceMode, setVoiceMode] = useState(false);
-  const [voiceTranscript, setVoiceTranscript] = useState('');
-  const [isTranscribing, setIsTranscribing] = useState(false);
 
   const wsRef = useRef(null);
   const messagesEndRef = useRef(null);
@@ -43,7 +35,7 @@ const AgentChat = () => {
       setIsConnected(true);
       ws.send(
         JSON.stringify({
-          type: 'start',
+          type: "start",
           incident_id: incidentId,
           tenant_id: user?.tenant_id,
           user_id: user?.user_id,
@@ -66,12 +58,10 @@ const AgentChat = () => {
       try {
         const response = JSON.parse(event.data);
         handleAgentMessage(response);
-      } catch {
-      }
+      } catch {}
     };
 
-    ws.onerror = () => {
-    };
+    ws.onerror = () => {};
 
     ws.onclose = () => {
       setIsConnected(false);
@@ -82,25 +72,32 @@ const AgentChat = () => {
         ws.close();
       }
     };
-  }, [incidentId, useCase, locationText, geoLocation, user?.full_name, user?.phone]);
+  }, [
+    incidentId,
+    useCase,
+    locationText,
+    geoLocation,
+    user?.full_name,
+    user?.phone,
+  ]);
 
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, isTyping]);
 
   const handleAgentMessage = (response) => {
-    if (response.type === 'typing') {
+    if (response.type === "typing") {
       setIsTyping(response.typing);
       return;
     }
 
-    if (response.type === 'agent_message') {
+    if (response.type === "agent_message") {
       setIsTyping(false);
       // Handle no-workflow redirect to manual report form
-      if (response.action === 'no_workflow') {
+      if (response.action === "no_workflow") {
         const agentMessage = {
           id: `msg_${Date.now()}`,
-          role: 'agent',
+          role: "agent",
           content: response.message,
           timestamp: new Date().toISOString(),
           data: response.data,
@@ -110,12 +107,13 @@ const AgentChat = () => {
 
         // Redirect to /report in manual mode after a short delay
         setTimeout(() => {
-          navigate('/report', {
+          navigate("/report", {
             state: {
               manualReport: true,
               incidentId: response.data?.incident_id || incidentId,
-              classifiedUseCase: response.data?.classified_use_case || '',
-              description: messages.find((m) => m.role === 'user')?.content || '',
+              classifiedUseCase: response.data?.classified_use_case || "",
+              description:
+                messages.find((m) => m.role === "user")?.content || "",
             },
           });
         }, 2500);
@@ -124,7 +122,7 @@ const AgentChat = () => {
 
       const agentMessage = {
         id: `msg_${Date.now()}`,
-        role: 'agent',
+        role: "agent",
         content: response.message,
         timestamp: new Date().toISOString(),
         data: response.data, // Include data for options and kb_validation
@@ -144,18 +142,34 @@ const AgentChat = () => {
       return;
     }
 
-    if (response.type === 'error') {
+    if (response.type === "error") {
     }
   };
 
   // Common incident examples for quick start
   const commonExamples = [
-    { icon: '🔥', text: 'I smell gas in my kitchen', category: 'Emergency' },
-    { icon: '💨', text: 'Weak or yellow flame on my stove', category: 'Appliance' },
-    { icon: '🔊', text: 'I hear a hissing sound near the gas line', category: 'Emergency' },
-    { icon: '📊', text: 'My gas meter is running very fast', category: 'Meter' },
-    { icon: '🌙', text: 'I only smell gas at night', category: 'Pattern' },
-    { icon: '🚫', text: 'My gas supply has completely stopped', category: 'Supply' },
+    { icon: "🔥", text: "I smell gas in my kitchen", category: "Emergency" },
+    {
+      icon: "💨",
+      text: "Weak or yellow flame on my stove",
+      category: "Appliance",
+    },
+    {
+      icon: "🔊",
+      text: "I hear a hissing sound near the gas line",
+      category: "Emergency",
+    },
+    {
+      icon: "📊",
+      text: "My gas meter is running very fast",
+      category: "Meter",
+    },
+    { icon: "🌙", text: "I only smell gas at night", category: "Pattern" },
+    {
+      icon: "🚫",
+      text: "My gas supply has completely stopped",
+      category: "Supply",
+    },
   ];
 
   const handleExampleClick = (exampleText) => {
@@ -169,8 +183,8 @@ const AgentChat = () => {
 
     const userMessage = {
       id: `msg_${Date.now()}`,
-      role: 'user',
-      content: typeof input === 'string' ? input : JSON.stringify(input),
+      role: "user",
+      content: typeof input === "string" ? input : JSON.stringify(input),
       timestamp: new Date().toISOString(),
     };
 
@@ -178,7 +192,7 @@ const AgentChat = () => {
 
     wsRef.current.send(
       JSON.stringify({
-        type: 'user_input',
+        type: "user_input",
         session_id: sessionId,
         input,
       }),
@@ -192,61 +206,6 @@ const AgentChat = () => {
     sendUserInput({ message: option });
   };
 
-  const handleAudioReady = async (audioBlob) => {
-    setIsTranscribing(true);
-    try {
-      const result = await transcribeAudio(audioBlob);
-      if (result.text) {
-        setVoiceTranscript((prev) => (prev ? prev + ' ' + result.text : result.text));
-      } else {
-        setVoiceTranscript((prev) => prev || '');
-      }
-    } catch {
-      // Show a brief placeholder so the user knows to try again
-      setVoiceTranscript((prev) => prev || '');
-    } finally {
-      setIsTranscribing(false);
-    }
-  };
-
-  const handleSendTranscript = () => {
-    if (voiceTranscript.trim()) {
-      sendUserInput({ message: voiceTranscript.trim() });
-      setVoiceTranscript('');
-    }
-  };
-
-  const handleFileUpload = async (file) => {
-    if (!file) {
-      sendUserInput({ upload_skipped: true });
-      return;
-    }
-
-    const formData = new FormData();
-    formData.append('file', file);
-    formData.append('session_id', sessionId);
-
-    try {
-      const response = await fetch('/api/v1/upload', {
-        method: 'POST',
-        body: formData,
-      });
-      const data = await response.json();
-
-      if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-        wsRef.current.send(
-          JSON.stringify({
-            type: 'upload_complete',
-            session_id: sessionId,
-            file_path: data.file_path,
-            file_type: data.file_type,
-          }),
-        );
-      }
-    } catch {
-    }
-  };
-
   return (
     <main className="page-container max-w-[1500px]">
       <ProfileDropdown />
@@ -255,205 +214,322 @@ const AgentChat = () => {
           <header className="border-b border-slate-200/80 bg-white/60 px-5 py-4 md:px-6">
             <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
               <div>
-                <h1 className="text-2xl font-bold text-slate-900">🛡️ Gas Safety Assistant</h1>
+                <h1 className="text-2xl font-bold text-slate-900">
+                  🛡️ Gas Safety Assistant
+                </h1>
                 <p className="mt-1 text-sm text-slate-600">
                   {isComplete
-                    ? `Assessment complete for incident ${incidentId?.slice(0, 8) || 'unknown'}`
+                    ? `Assessment complete for incident ${incidentId?.slice(0, 8) || "unknown"}`
                     : messages.length === 0
                       ? "I'm here to help you 24/7 with any gas-related concerns"
-                      : `Helping you with incident ${incidentId?.slice(0, 8) || 'unknown'}`
-                  }
+                      : `Helping you with incident ${incidentId?.slice(0, 8) || "unknown"}`}
                 </p>
               </div>
               <div className="flex items-center gap-2">
                 <span
-                  className={`status-pill ${isConnected
-                    ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
-                    : 'border-rose-200 bg-rose-50 text-rose-700'
-                    }`}
+                  className={`status-pill ${
+                    isConnected
+                      ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                      : "border-rose-200 bg-rose-50 text-rose-700"
+                  }`}
                 >
-                  <span className={`h-2 w-2 rounded-full ${isConnected ? 'bg-emerald-500' : 'bg-rose-500'}`} />
-                  {isConnected ? 'Connected' : 'Disconnected'}
+                  <span
+                    className={`h-2 w-2 rounded-full ${isConnected ? "bg-emerald-500" : "bg-rose-500"}`}
+                  />
+                  {isConnected ? "Connected" : "Disconnected"}
                 </span>
-                {isComplete && <span className="status-pill border-brand-200 bg-brand-50 text-brand-700">✅ Complete</span>}
+                {isComplete && (
+                  <span className="status-pill border-brand-200 bg-brand-50 text-brand-700">
+                    ✅ Complete
+                  </span>
+                )}
               </div>
             </div>
           </header>
 
           <div className="flex-1 space-y-4 overflow-y-auto bg-slate-50/70 px-4 py-5 md:px-6">
             {messages.map((message) => (
-              <ChatMessage key={message.id} message={message} onOptionClick={handleOptionClick} />
+              <ChatMessage
+                key={message.id}
+                message={message}
+                onOptionClick={handleOptionClick}
+              />
             ))}
 
             {/* Show KB Validation after completion */}
-            {isComplete && messages.length > 0 && (() => {
-              const lastMessage = messages[messages.length - 1];
-              const kbValidation = lastMessage?.kb_validation;
+            {isComplete &&
+              messages.length > 0 &&
+              (() => {
+                const lastMessage = messages[messages.length - 1];
+                const kbValidation = lastMessage?.kb_validation;
 
-              // Debug logging
-              console.log('🔍 KB Validation Debug:', {
-                isComplete,
-                messageCount: messages.length,
-                lastMessage: lastMessage,
-                kbValidation: kbValidation
-              });
+                // Debug logging
+                console.log("🔍 KB Validation Debug:", {
+                  isComplete,
+                  messageCount: messages.length,
+                  lastMessage: lastMessage,
+                  kbValidation: kbValidation,
+                });
 
-              // Show debug info if no KB validation
-              if (!kbValidation) {
+                // Show debug info if no KB validation
+                if (!kbValidation) {
+                  return (
+                    <div
+                      style={{
+                        padding: "16px",
+                        background: "#f8fafc",
+                        border: "1px solid #e2e8f0",
+                        borderRadius: "12px",
+                        fontSize: "0.85rem",
+                        color: "#64748b",
+                      }}
+                    >
+                      ℹ️ No KB validation data available for this incident
+                    </div>
+                  );
+                }
+
+                if (kbValidation.verdict === "unknown") {
+                  return (
+                    <div
+                      style={{
+                        padding: "16px",
+                        background: "#f8fafc",
+                        border: "1px solid #e2e8f0",
+                        borderRadius: "12px",
+                        fontSize: "0.85rem",
+                        color: "#64748b",
+                      }}
+                    >
+                      🔍 No similar incidents found in knowledge base (scores:
+                      true={kbValidation.true_kb_score?.toFixed(2) || 0}, false=
+                      {kbValidation.false_kb_score?.toFixed(2) || 0})
+                    </div>
+                  );
+                }
+
+                if (!kbValidation.verdict) return null;
+
+                const isTrue = kbValidation.verdict === "true";
+                const confidence = kbValidation.confidence || 0;
+                const matchedEntry = kbValidation.matched_entry;
+
                 return (
-                  <div style={{
-                    padding: '16px',
-                    background: '#f8fafc',
-                    border: '1px solid #e2e8f0',
-                    borderRadius: '12px',
-                    fontSize: '0.85rem',
-                    color: '#64748b'
-                  }}>
-                    ℹ️ No KB validation data available for this incident
-                  </div>
-                );
-              }
-
-              if (kbValidation.verdict === 'unknown') {
-                return (
-                  <div style={{
-                    padding: '16px',
-                    background: '#f8fafc',
-                    border: '1px solid #e2e8f0',
-                    borderRadius: '12px',
-                    fontSize: '0.85rem',
-                    color: '#64748b'
-                  }}>
-                    🔍 No similar incidents found in knowledge base (scores: true={kbValidation.true_kb_score?.toFixed(2) || 0}, false={kbValidation.false_kb_score?.toFixed(2) || 0})
-                  </div>
-                );
-              }
-
-              if (!kbValidation.verdict) return null;
-
-              const isTrue = kbValidation.verdict === 'true';
-              const confidence = kbValidation.confidence || 0;
-              const matchedEntry = kbValidation.matched_entry;
-
-              return (
-                <div style={{
-                  borderRadius: '16px',
-                  overflow: 'hidden',
-                  border: isTrue ? '1px solid #bbf7d0' : '1px solid #fde68a',
-                  background: '#fff',
-                  boxShadow: '0 4px 12px rgba(0,0,0,0.08)',
-                }}>
-                  <div style={{
-                    padding: '16px 20px',
-                    background: isTrue
-                      ? 'linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%)'
-                      : 'linear-gradient(135deg, #fffbeb 0%, #fef3c7 100%)',
-                    borderBottom: isTrue ? '1px solid #bbf7d0' : '1px solid #fde68a',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'space-between',
-                    flexWrap: 'wrap',
-                    gap: '10px',
-                  }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                      <span style={{ fontSize: '1.4rem' }}>{isTrue ? '⚠️' : 'ℹ️'}</span>
-                      <div>
-                        <div style={{ fontWeight: '700', fontSize: '1rem', color: '#1e293b' }}>
-                          Knowledge Base Match
+                  <div
+                    style={{
+                      borderRadius: "16px",
+                      overflow: "hidden",
+                      border: isTrue
+                        ? "1px solid #bbf7d0"
+                        : "1px solid #fde68a",
+                      background: "#fff",
+                      boxShadow: "0 4px 12px rgba(0,0,0,0.08)",
+                    }}
+                  >
+                    <div
+                      style={{
+                        padding: "16px 20px",
+                        background: isTrue
+                          ? "linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%)"
+                          : "linear-gradient(135deg, #fffbeb 0%, #fef3c7 100%)",
+                        borderBottom: isTrue
+                          ? "1px solid #bbf7d0"
+                          : "1px solid #fde68a",
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "space-between",
+                        flexWrap: "wrap",
+                        gap: "10px",
+                      }}
+                    >
+                      <div
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          gap: "10px",
+                        }}
+                      >
+                        <span style={{ fontSize: "1.4rem" }}>
+                          {isTrue ? "⚠️" : "ℹ️"}
+                        </span>
+                        <div>
+                          <div
+                            style={{
+                              fontWeight: "700",
+                              fontSize: "1rem",
+                              color: "#1e293b",
+                            }}
+                          >
+                            Knowledge Base Match
+                          </div>
+                          <div
+                            style={{
+                              fontSize: "0.8rem",
+                              color: "#64748b",
+                              marginTop: "2px",
+                            }}
+                          >
+                            {isTrue
+                              ? "Similar confirmed incident"
+                              : "Similar false alarm"}
+                          </div>
                         </div>
-                        <div style={{ fontSize: '0.8rem', color: '#64748b', marginTop: '2px' }}>
-                          {isTrue ? 'Similar confirmed incident' : 'Similar false alarm'}
-                        </div>
+                      </div>
+                      <div
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          gap: "8px",
+                        }}
+                      >
+                        <span
+                          style={{
+                            padding: "4px 12px",
+                            borderRadius: "8px",
+                            fontSize: "0.8rem",
+                            fontWeight: "700",
+                            background: isTrue ? "#dcfce7" : "#fef3c7",
+                            color: isTrue ? "#166534" : "#92400e",
+                            border: isTrue
+                              ? "1px solid #86efac"
+                              : "1px solid #fcd34d",
+                          }}
+                        >
+                          {isTrue ? "True Incident" : "False Report"}
+                        </span>
+                        <span
+                          style={{
+                            padding: "4px 12px",
+                            borderRadius: "8px",
+                            fontSize: "0.8rem",
+                            fontWeight: "700",
+                            background:
+                              confidence >= 0.7
+                                ? "#dcfce7"
+                                : confidence >= 0.4
+                                  ? "#fef3c7"
+                                  : "#fee2e2",
+                            color:
+                              confidence >= 0.7
+                                ? "#166534"
+                                : confidence >= 0.4
+                                  ? "#92400e"
+                                  : "#991b1b",
+                          }}
+                        >
+                          {(confidence * 100).toFixed(0)}% match
+                        </span>
                       </div>
                     </div>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                      <span style={{
-                        padding: '4px 12px',
-                        borderRadius: '8px',
-                        fontSize: '0.8rem',
-                        fontWeight: '700',
-                        background: isTrue ? '#dcfce7' : '#fef3c7',
-                        color: isTrue ? '#166534' : '#92400e',
-                        border: isTrue ? '1px solid #86efac' : '1px solid #fcd34d',
-                      }}>
-                        {isTrue ? 'True Incident' : 'False Report'}
-                      </span>
-                      <span style={{
-                        padding: '4px 12px',
-                        borderRadius: '8px',
-                        fontSize: '0.8rem',
-                        fontWeight: '700',
-                        background: confidence >= 0.7 ? '#dcfce7' : confidence >= 0.4 ? '#fef3c7' : '#fee2e2',
-                        color: confidence >= 0.7 ? '#166534' : confidence >= 0.4 ? '#92400e' : '#991b1b',
-                      }}>
-                        {(confidence * 100).toFixed(0)}% match
-                      </span>
+                    <div style={{ padding: "18px 20px" }}>
+                      {matchedEntry?.description && (
+                        <div style={{ marginBottom: "14px" }}>
+                          <div
+                            style={{
+                              fontSize: "0.75rem",
+                              fontWeight: "700",
+                              color: "#64748b",
+                              marginBottom: "6px",
+                              textTransform: "uppercase",
+                            }}
+                          >
+                            Similar Case
+                          </div>
+                          <div
+                            style={{
+                              fontSize: "0.9rem",
+                              color: "#334155",
+                              lineHeight: 1.6,
+                            }}
+                          >
+                            {matchedEntry.description}
+                          </div>
+                        </div>
+                      )}
+                      {isTrue && matchedEntry?.root_cause && (
+                        <div
+                          style={{
+                            marginBottom: "14px",
+                            padding: "12px 14px",
+                            borderRadius: "10px",
+                            background: "#fef2f2",
+                            borderLeft: "4px solid #f87171",
+                          }}
+                        >
+                          <div
+                            style={{
+                              fontSize: "0.75rem",
+                              fontWeight: "700",
+                              color: "#991b1b",
+                              marginBottom: "4px",
+                            }}
+                          >
+                            Typical Root Cause
+                          </div>
+                          <div
+                            style={{
+                              fontSize: "0.85rem",
+                              color: "#7f1d1d",
+                              lineHeight: 1.5,
+                            }}
+                          >
+                            {matchedEntry.root_cause}
+                          </div>
+                        </div>
+                      )}
+                      {matchedEntry?.tags && matchedEntry.tags.length > 0 && (
+                        <div
+                          style={{
+                            display: "flex",
+                            flexWrap: "wrap",
+                            gap: "6px",
+                            marginTop: "10px",
+                          }}
+                        >
+                          {matchedEntry.tags.slice(0, 5).map((tag, i) => (
+                            <span
+                              key={i}
+                              style={{
+                                padding: "3px 10px",
+                                borderRadius: "6px",
+                                fontSize: "0.75rem",
+                                fontWeight: "600",
+                                background: "#f1f5f9",
+                                color: "#475569",
+                              }}
+                            >
+                              {tag}
+                            </span>
+                          ))}
+                        </div>
+                      )}
                     </div>
                   </div>
-                  <div style={{ padding: '18px 20px' }}>
-                    {matchedEntry?.description && (
-                      <div style={{ marginBottom: '14px' }}>
-                        <div style={{ fontSize: '0.75rem', fontWeight: '700', color: '#64748b', marginBottom: '6px', textTransform: 'uppercase' }}>
-                          Similar Case
-                        </div>
-                        <div style={{ fontSize: '0.9rem', color: '#334155', lineHeight: 1.6 }}>
-                          {matchedEntry.description}
-                        </div>
-                      </div>
-                    )}
-                    {isTrue && matchedEntry?.root_cause && (
-                      <div style={{
-                        marginBottom: '14px',
-                        padding: '12px 14px',
-                        borderRadius: '10px',
-                        background: '#fef2f2',
-                        borderLeft: '4px solid #f87171',
-                      }}>
-                        <div style={{ fontSize: '0.75rem', fontWeight: '700', color: '#991b1b', marginBottom: '4px' }}>
-                          Typical Root Cause
-                        </div>
-                        <div style={{ fontSize: '0.85rem', color: '#7f1d1d', lineHeight: 1.5 }}>
-                          {matchedEntry.root_cause}
-                        </div>
-                      </div>
-                    )}
-                    {matchedEntry?.tags && matchedEntry.tags.length > 0 && (
-                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginTop: '10px' }}>
-                        {matchedEntry.tags.slice(0, 5).map((tag, i) => (
-                          <span key={i} style={{
-                            padding: '3px 10px',
-                            borderRadius: '6px',
-                            fontSize: '0.75rem',
-                            fontWeight: '600',
-                            background: '#f1f5f9',
-                            color: '#475569',
-                          }}>
-                            {tag}
-                          </span>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                </div>
-              );
-            })()}
+                );
+              })()}
 
             {/* Show common examples after first agent message, before user responds */}
-            {messages.length === 1 && messages[0].role === 'agent' && (
+            {messages.length === 1 && messages[0].role === "agent" && (
               <div className="rounded-2xl border border-slate-200 bg-white/70 p-6">
-                <h4 className="mb-4 text-sm font-semibold text-slate-700">💡 Common Issues - Click to Start:</h4>
+                <h4 className="mb-4 text-sm font-semibold text-slate-700">
+                  💡 Common Issues - Click to Start:
+                </h4>
                 <div className="grid gap-3 sm:grid-cols-2">
                   {commonExamples.map((example, index) => (
                     <button
                       key={index}
                       onClick={() => handleExampleClick(example.text)}
                       className="flex items-start gap-3 rounded-lg border border-slate-200 bg-white p-3 text-left transition-all hover:border-blue-300 hover:bg-blue-50 hover:shadow-sm"
-                      style={{ cursor: 'pointer' }}
+                      style={{ cursor: "pointer" }}
                     >
                       <span className="text-2xl">{example.icon}</span>
                       <div className="flex-1">
-                        <div className="text-sm font-medium text-slate-900">{example.text}</div>
-                        <div className="mt-1 text-xs text-slate-500">{example.category}</div>
+                        <div className="text-sm font-medium text-slate-900">
+                          {example.text}
+                        </div>
+                        <div className="mt-1 text-xs text-slate-500">
+                          {example.category}
+                        </div>
                       </div>
                     </button>
                   ))}
@@ -465,22 +541,37 @@ const AgentChat = () => {
             )}
 
             {isTyping && (
-              <div style={{ display: 'flex', justifyContent: 'flex-start', marginBottom: 14 }}>
+              <div
+                style={{
+                  display: "flex",
+                  justifyContent: "flex-start",
+                  marginBottom: 14,
+                }}
+              >
                 <div
                   style={{
-                    padding: '14px 20px',
+                    padding: "14px 20px",
                     borderRadius: 14,
-                    border: '1px solid #d8e3ee',
-                    background: '#ffffff',
-                    boxShadow: '0 12px 24px -22px rgba(15, 31, 51, 0.45)',
-                    display: 'flex',
-                    alignItems: 'center',
+                    border: "1px solid #d8e3ee",
+                    background: "#ffffff",
+                    boxShadow: "0 12px 24px -22px rgba(15, 31, 51, 0.45)",
+                    display: "flex",
+                    alignItems: "center",
                     gap: 5,
                   }}
                 >
-                  <span className="typing-dot" style={{ animationDelay: '0ms' }} />
-                  <span className="typing-dot" style={{ animationDelay: '150ms' }} />
-                  <span className="typing-dot" style={{ animationDelay: '300ms' }} />
+                  <span
+                    className="typing-dot"
+                    style={{ animationDelay: "0ms" }}
+                  />
+                  <span
+                    className="typing-dot"
+                    style={{ animationDelay: "150ms" }}
+                  />
+                  <span
+                    className="typing-dot"
+                    style={{ animationDelay: "300ms" }}
+                  />
                 </div>
               </div>
             )}
@@ -488,49 +579,24 @@ const AgentChat = () => {
             <div ref={messagesEndRef} />
           </div>
 
-          {!isComplete && currentAction && !voiceMode && (
+          {!isComplete && currentAction && (
             <div className="border-t border-slate-200 bg-white/70 px-5 py-4 md:px-6">
-              {currentAction.action === 'question' && (
-                <QuestionInput questionData={currentAction.data} onSubmit={sendUserInput} />
-              )}
-              {currentAction.action === 'upload' && <UploadInput uploadData={currentAction.data} onUpload={handleFileUpload} />}
-            </div>
-          )}
-
-          {!isComplete && voiceMode && (
-            <div className="border-t border-slate-200 bg-white/70 px-5 py-4 md:px-6">
-              <LiveVoiceChat
-                sessionId={sessionId}
-                isConnected={isConnected}
-                transcribeMode={true}
-                onAudioReady={handleAudioReady}
-                onAudioResponse={() => { }}
-                onStop={() => setVoiceMode(false)}
-              />
-              <div className="mt-3 flex gap-2">
-                <textarea
-                  className="flex-1 rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm focus:border-blue-400 focus:outline-none"
-                  rows={2}
-                  placeholder={isTranscribing ? 'Transcribing...' : 'Tap the mic and speak. Your text will appear here — edit before sending.'}
-                  value={voiceTranscript}
-                  onChange={(e) => setVoiceTranscript(e.target.value)}
-                  disabled={isTranscribing}
+              {currentAction.action === "question" && (
+                <QuestionInput
+                  questionData={currentAction.data}
+                  onSubmit={sendUserInput}
                 />
-                <button
-                  onClick={handleSendTranscript}
-                  disabled={!voiceTranscript.trim() || isTranscribing}
-                  className="btn-primary self-end rounded-xl px-4 py-2 text-sm"
-                  style={{ opacity: voiceTranscript.trim() ? 1 : 0.5 }}
-                >
-                  Send
-                </button>
-              </div>
+              )}
             </div>
           )}
 
           {isComplete && (
             <div className="border-t border-slate-200 bg-white/70 px-5 py-4 text-center md:px-6">
-              <button type="button" onClick={() => navigate('/dashboard')} className="btn-primary">
+              <button
+                type="button"
+                onClick={() => navigate("/dashboard")}
+                className="btn-primary"
+              >
                 Return To Dashboard
               </button>
             </div>
@@ -538,7 +604,10 @@ const AgentChat = () => {
         </section>
 
         <aside className="surface-card w-full xl:w-[380px]">
-          <WorkflowVisualization workflowId={useCase} currentStep={currentAction?.action} />
+          <WorkflowVisualization
+            workflowId={useCase}
+            currentStep={currentAction?.action}
+          />
         </aside>
       </div>
     </main>

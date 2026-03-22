@@ -6,21 +6,20 @@
  *
  * Used by ProfessionalDashboard.
  */
-import { Flame } from 'lucide-react';
+import { Flame } from "lucide-react";
 
 const DEFAULT_GRADIENT = "#8DE971";
 
 const DEFAULT_FEATURES = [
-  { icon: "🎤", title: "Voice Recognition", desc: "Speak naturally, we understand" },
   { icon: "⚡", title: "Instant Analysis", desc: "Real-time risk assessment" },
-  { icon: "🤖", title: "AI Agent Assistant", desc: "Intelligent guidance system" },
+  { icon: "🤖", title: "Agent Assistant", desc: "Intelligent guidance system" },
   { icon: "🔒", title: "Secure & Private", desc: "Enterprise-grade security" },
 ];
 
 export default function HeroSection({
   logoIcon = <Flame size={28} color="#f97316" />,
   logoText = "Gas Intelligence",
-  title = "AI-Powered Gas\nIncident Response",
+  title = "Gas\nIncident Response",
   subtitle = "Report incidents instantly with voice or text. Our intelligent system analyzes and responds in real-time.",
   features = DEFAULT_FEATURES,
   primaryGradient = DEFAULT_GRADIENT,
@@ -63,11 +62,13 @@ export default function HeroSection({
               onClick={onStartChat}
               onMouseEnter={(e) => {
                 e.target.style.transform = "translateY(-1px)";
-                e.target.style.boxShadow = "0 20px 28px -22px rgba(3, 3, 4, 0.95)";
+                e.target.style.boxShadow =
+                  "0 20px 28px -22px rgba(3, 3, 4, 0.95)";
               }}
               onMouseLeave={(e) => {
                 e.target.style.transform = "translateY(0)";
-                e.target.style.boxShadow = "0 18px 26px -22px rgba(3, 3, 4, 0.9)";
+                e.target.style.boxShadow =
+                  "0 18px 26px -22px rgba(3, 3, 4, 0.9)";
               }}
             >
               <span>Start Incident Report</span>

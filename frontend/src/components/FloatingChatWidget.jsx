@@ -2,17 +2,21 @@
  * FloatingChatWidget — reusable floating chat FAB + overlay panel.
  *
  * Extracted from ProfessionalDashboard. Contains all WebSocket chat logic,
- * voice/camera/video modes, workflow category selection, and message rendering.
+ * workflow category selection, and message rendering.
  *
  * Used by ProfessionalDashboard. Props control cosmetic differences.
  */
-import React, { useState, useRef, useEffect, forwardRef, useImperativeHandle } from "react";
+import React, {
+  useState,
+  useRef,
+  useEffect,
+  forwardRef,
+  useImperativeHandle,
+} from "react";
 import { useNavigate } from "react-router-dom";
 import { connectWebSocket } from "../services/websocket";
-import { getTenantWorkflows, transcribeAudio, lookupCustomerByPhone } from "../services/api";
+import { getTenantWorkflows, lookupCustomerByPhone } from "../services/api";
 import ChatMessage from "./ChatMessage";
-import VideoRecorder from "./VideoRecorder";
-import LiveVoiceChat from "./LiveVoiceChat";
 import { formatUseCase } from "../utils/formatters";
 
 const DEFAULT_GRADIENT = "#8DE971";
@@ -48,32 +52,27 @@ const FloatingChatWidget = forwardRef(function FloatingChatWidget(
     userDetails = {},
     userRole,
     primaryGradient = DEFAULT_GRADIENT,
-    chatbotName = "AI Agent Assistant",
+    chatbotName = "Agent Assistant",
     onNoWorkflow,
   },
-  ref
+  ref,
 ) {
   const navigate = useNavigate();
 
   const [messages, setMessages] = useState([]);
   const [inputText, setInputText] = useState("");
-  const [isVideoRecording, setIsVideoRecording] = useState(false);
   const [sessionId, setSessionId] = useState("");
   const [isConnected, setIsConnected] = useState(false);
   const [incidentStarted, setIncidentStarted] = useState(false);
   const [isTyping, setIsTyping] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
-  const [voiceMode, setVoiceMode] = useState(false);
-  const [isSpeaking, setIsSpeaking] = useState(false);
   const [availableWorkflows, setAvailableWorkflows] = useState([]);
   const [workflowStarted, setWorkflowStarted] = useState(false);
   const [chatOpen, setChatOpen] = useState(false);
   const [showAllCategories, setShowAllCategories] = useState(false);
-  const [cameraMode, setCameraMode] = useState(false);
-  const [cameraPreview, setCameraPreview] = useState(null);
-  const [isVoiceTranscribing, setIsVoiceTranscribing] = useState(false);
   const [selectedReporterType, setSelectedReporterType] = useState(null);
-  const [isReporterSelectionPending, setIsReporterSelectionPending] = useState(false);
+  const [isReporterSelectionPending, setIsReporterSelectionPending] =
+    useState(false);
 
   // On-behalf-of-customer flow (company/call-center role)
   const isCallCenter = userRole === "company";
@@ -83,12 +82,6 @@ const FloatingChatWidget = forwardRef(function FloatingChatWidget(
   const messagesEndRef = useRef(null);
   const wsRef = useRef(null);
   const pendingFirstInputRef = useRef(null);
-  const pendingVoiceMsgIdRef = useRef(null);
-  const pendingImageMsgIdRef = useRef(null);
-  const cameraFileInputRef = useRef(null);
-  const cameraVideoRef = useRef(null);
-  const cameraCanvasRef = useRef(null);
-  const cameraStreamRef = useRef(null);
 
   // Expose open() so parent (hero button) can programmatically open the widget
   useImperativeHandle(ref, () => ({
@@ -380,7 +373,9 @@ const FloatingChatWidget = forwardRef(function FloatingChatWidget(
   const handleReporterTypeSelect = (reporterOption) => {
     const reporterType =
       typeof reporterOption === "string"
-        ? REPORTER_TYPE_OPTIONS.find((option) => option.label === reporterOption)
+        ? REPORTER_TYPE_OPTIONS.find(
+            (option) => option.label === reporterOption,
+          )
         : reporterOption;
 
     if (!reporterType) return;
@@ -400,7 +395,8 @@ const FloatingChatWidget = forwardRef(function FloatingChatWidget(
         {
           id: `msg_${Date.now()}_phone_prompt`,
           role: "agent",
-          content: "Thanks. Please enter the customer's registered phone number to look up their details.",
+          content:
+            "Thanks. Please enter the customer's registered phone number to look up their details.",
           timestamp: new Date().toISOString(),
           data: { phonePrompt: true },
         },
@@ -461,7 +457,6 @@ const FloatingChatWidget = forwardRef(function FloatingChatWidget(
     ws.onclose = () => setIsConnected(false);
   };
 
-
   const handleAgentMessage = (response) => {
     if (response.type === "agent_message") {
       const newSid = response.session_id;
@@ -483,46 +478,11 @@ const FloatingChatWidget = forwardRef(function FloatingChatWidget(
                 type: "user_input",
                 session_id: newSid,
                 input,
-              })
+              }),
             );
           }
         }, 100);
         return;
-      }
-
-      // Update voice placeholder
-      if (pendingVoiceMsgIdRef.current) {
-        const voiceId = pendingVoiceMsgIdRef.current;
-        pendingVoiceMsgIdRef.current = null;
-        setIsVoiceTranscribing(false);
-        if (response.user_transcript) {
-          setMessages((prev) =>
-            prev.map((m) =>
-              m.id === voiceId
-                ? { ...m, content: `🎤 "${response.user_transcript}"`, isVoicePending: false }
-                : m
-            )
-          );
-        } else {
-          setMessages((prev) =>
-            prev.map((m) =>
-              m.id === voiceId
-                ? { ...m, content: "🎤 Voice message", isVoicePending: false }
-                : m
-            )
-          );
-        }
-      }
-
-      // Update image placeholder
-      if (pendingImageMsgIdRef.current) {
-        const imageId = pendingImageMsgIdRef.current;
-        pendingImageMsgIdRef.current = null;
-        setMessages((prev) =>
-          prev.map((m) =>
-            m.id === imageId ? { ...m, content: "", isImagePending: false } : m
-          )
-        );
       }
 
       // Handle no-workflow
@@ -562,7 +522,10 @@ const FloatingChatWidget = forwardRef(function FloatingChatWidget(
         if (response.action === "question" && response.data?.question) {
           const question = response.data.question;
           if (messageContent.includes(question)) {
-            messageContent = messageContent.replace(question, `**${question}**`);
+            messageContent = messageContent.replace(
+              question,
+              `**${question}**`,
+            );
           } else {
             messageContent = `**${question}**\n\n${messageContent}`;
           }
@@ -578,27 +541,8 @@ const FloatingChatWidget = forwardRef(function FloatingChatWidget(
         };
         setMessages((prev) => [...prev, agentMessage]);
         setIsTyping(false);
-
-        if (voiceMode && response.message) {
-          playTextWithBrowserTTS(response.message);
-        }
       }, 800);
     } else if (response.type === "error") {
-      if (pendingVoiceMsgIdRef.current) {
-        const voiceId = pendingVoiceMsgIdRef.current;
-        pendingVoiceMsgIdRef.current = null;
-        setIsVoiceTranscribing(false);
-        setMessages((prev) =>
-          prev.map((m) =>
-            m.id === voiceId
-              ? { ...m, content: "🎤 Voice message", isVoicePending: false }
-              : m
-          )
-        );
-      }
-      if (pendingImageMsgIdRef.current) {
-        pendingImageMsgIdRef.current = null;
-      }
       const errorMessage = {
         id: `msg_${Date.now()}`,
         role: "agent",
@@ -610,55 +554,19 @@ const FloatingChatWidget = forwardRef(function FloatingChatWidget(
     }
   };
 
-  const playTextWithBrowserTTS = (text) => {
-    if ("speechSynthesis" in window) {
-      window.speechSynthesis.cancel();
-      let voices = window.speechSynthesis.getVoices();
-
-      const speakText = () => {
-        const utterance = new SpeechSynthesisUtterance(text);
-        utterance.rate = 1.0;
-        utterance.pitch = 1.0;
-        utterance.volume = 1.0;
-
-        voices = window.speechSynthesis.getVoices();
-        const preferredVoice = voices.find(
-          (v) =>
-            v.name.includes("Google") ||
-            v.name.includes("Female") ||
-            v.name.includes("Samantha") ||
-            v.name.includes("Microsoft")
-        );
-        if (preferredVoice) utterance.voice = preferredVoice;
-        else if (voices.length > 0) utterance.voice = voices[0];
-
-        utterance.onstart = () => setIsSpeaking(true);
-        utterance.onend = () => setIsSpeaking(false);
-        utterance.onerror = () => setIsSpeaking(false);
-
-        window.speechSynthesis.speak(utterance);
-      };
-
-      if (voices.length === 0) {
-        window.speechSynthesis.onvoiceschanged = () => speakText();
-      } else {
-        speakText();
-      }
-    }
-  };
-
-  const stopTTS = () => {
-    if ("speechSynthesis" in window) {
-      window.speechSynthesis.cancel();
-      setIsSpeaking(false);
-    }
-  };
-
   // Resolve the effective user ID: customer's ID when on-behalf, else logged-in user
   const effectiveUserId = customerDetails ? customerDetails.user_id : userId;
   const effectiveUserDetails = customerDetails
-    ? { name: customerDetails.full_name, phone: customerDetails.phone, address: customerDetails.address }
-    : { name: userDetails.name || null, phone: userDetails.phone || null, address: userDetails.address || null };
+    ? {
+        name: customerDetails.full_name,
+        phone: customerDetails.phone,
+        address: customerDetails.address,
+      }
+    : {
+        name: userDetails.name || null,
+        phone: userDetails.phone || null,
+        address: userDetails.address || null,
+      };
 
   const buildInitialDataFull = (extra = {}) => ({
     ...extra,
@@ -669,7 +577,9 @@ const FloatingChatWidget = forwardRef(function FloatingChatWidget(
           reporter_type_label: selectedReporterType.label,
         }
       : {}),
-    ...(customerDetails ? { reported_by_staff_id: userId, on_behalf: true } : {}),
+    ...(customerDetails
+      ? { reported_by_staff_id: userId, on_behalf: true }
+      : {}),
   });
 
   const handleCategorySelect = (useCase, displayName) => {
@@ -695,7 +605,7 @@ const FloatingChatWidget = forwardRef(function FloatingChatWidget(
         user_id: effectiveUserId,
         use_case: useCase,
         initial_data: buildInitialDataFull({ use_case: useCase }),
-      })
+      }),
     );
   };
 
@@ -716,7 +626,7 @@ const FloatingChatWidget = forwardRef(function FloatingChatWidget(
           type: "user_input",
           session_id: sessionId,
           input: { message: option },
-        })
+        }),
       );
     }
   };
@@ -731,66 +641,79 @@ const FloatingChatWidget = forwardRef(function FloatingChatWidget(
       setInputText("");
       // Normalize phone: strip spaces/dashes, add +44 if needed
       let phone = text.replace(/[\s\-()]/g, "");
-      if (/^\d{10}$/.test(phone)) phone = "+44" + phone;          // 7700900101 → +447700900101
-      else if (/^0\d{10}$/.test(phone)) phone = "+44" + phone.slice(1); // 07700900101 → +447700900101
-      else if (/^44\d{10}$/.test(phone)) phone = "+" + phone;     // 447700900101 → +447700900101
-      else if (!phone.startsWith("+")) phone = "+" + phone;        // catch-all
+      if (/^\d{10}$/.test(phone))
+        phone = "+44" + phone; // 7700900101 → +447700900101
+      else if (/^0\d{10}$/.test(phone))
+        phone = "+44" + phone.slice(1); // 07700900101 → +447700900101
+      else if (/^44\d{10}$/.test(phone))
+        phone = "+" + phone; // 447700900101 → +447700900101
+      else if (!phone.startsWith("+")) phone = "+" + phone; // catch-all
       setMessages((prev) => [
         ...prev,
-        { id: `msg_${Date.now()}`, role: "user", content: phone, timestamp: new Date().toISOString() },
+        {
+          id: `msg_${Date.now()}`,
+          role: "user",
+          content: phone,
+          timestamp: new Date().toISOString(),
+        },
       ]);
       setIsTyping(true);
-      lookupCustomerByPhone(phone).then((customer) => {
-        setCustomerDetails(customer);
-        setPhoneCollectionPhase(false);
-        setTimeout(() => {
-          setMessages((prev) => [
-            ...prev,
-            {
-              id: `msg_${Date.now()}`,
-              role: "agent",
-              content: `**Customer Details**\n**Name:** ${customer.full_name}\n**Phone:** ${customer.phone}${customer.address ? `\n**Address:** ${customer.address}` : ""}`,
-              timestamp: new Date().toISOString(),
-              data: { customerBanner: true, customer },
-            },
-          ]);
-          setIsTyping(false);
-          addAgentMessage(
-            "Thanks. Now choose the report type to get the right triage flow, or describe the issue in your own words.",
-            { reportTypePrompt: true }
-          );
-        }, 600);
-      }).catch(() => {
-        setTimeout(() => {
-          setMessages((prev) => [
-            ...prev,
-            {
-              id: `msg_${Date.now()}`,
-              role: "agent",
-              content: `Could not find a customer with that phone number. Please check and try again.`,
-              timestamp: new Date().toISOString(),
-              data: { phonePrompt: true },
-            },
-          ]);
-          setIsTyping(false);
-        }, 600);
-      });
+      lookupCustomerByPhone(phone)
+        .then((customer) => {
+          setCustomerDetails(customer);
+          setPhoneCollectionPhase(false);
+          setTimeout(() => {
+            setMessages((prev) => [
+              ...prev,
+              {
+                id: `msg_${Date.now()}`,
+                role: "agent",
+                content: `**Customer Details**\n**Name:** ${customer.full_name}\n**Phone:** ${customer.phone}${customer.address ? `\n**Address:** ${customer.address}` : ""}`,
+                timestamp: new Date().toISOString(),
+                data: { customerBanner: true, customer },
+              },
+            ]);
+            setIsTyping(false);
+            addAgentMessage(
+              "Thanks. Now choose the report type to get the right triage flow, or describe the issue in your own words.",
+              { reportTypePrompt: true },
+            );
+          }, 600);
+        })
+        .catch(() => {
+          setTimeout(() => {
+            setMessages((prev) => [
+              ...prev,
+              {
+                id: `msg_${Date.now()}`,
+                role: "agent",
+                content: `Could not find a customer with that phone number. Please check and try again.`,
+                timestamp: new Date().toISOString(),
+                data: { phonePrompt: true },
+              },
+            ]);
+            setIsTyping(false);
+          }, 600);
+        });
       return;
     }
 
     if (isReporterSelectionPending) {
       setInputText("");
       const matchedReporterType = REPORTER_TYPE_OPTIONS.find(
-        (option) => option.label.toLowerCase() === text.toLowerCase()
+        (option) => option.label.toLowerCase() === text.toLowerCase(),
       );
 
       if (matchedReporterType) {
         handleReporterTypeSelect(matchedReporterType);
       } else {
-        addAgentMessage("Please choose one of the reporter types shown above to continue.", {
-          reporterTypePrompt: true,
-          options: REPORTER_TYPE_OPTIONS.map((option) => option.label),
-        });
+        addAgentMessage(
+          "Please choose one of the reporter types shown above to continue.",
+          {
+            reporterTypePrompt: true,
+            options: REPORTER_TYPE_OPTIONS.map((option) => option.label),
+          },
+        );
       }
       return;
     }
@@ -817,7 +740,7 @@ const FloatingChatWidget = forwardRef(function FloatingChatWidget(
           user_id: effectiveUserId,
           use_case: "",
           initial_data: buildInitialDataFull(),
-        })
+        }),
       );
     } else {
       wsRef.current.send(
@@ -825,7 +748,7 @@ const FloatingChatWidget = forwardRef(function FloatingChatWidget(
           type: "user_input",
           session_id: sessionId,
           input: { message: text },
-        })
+        }),
       );
     }
   };
@@ -834,201 +757,6 @@ const FloatingChatWidget = forwardRef(function FloatingChatWidget(
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       sendMessage();
-    }
-  };
-
-  const handleVideoRecorded = async (videoBlob) => {
-    setIsProcessing(true);
-    setMessages((prev) => [
-      ...prev,
-      {
-        id: `msg_${Date.now()}`,
-        role: "user",
-        content: "🎥 Video message (transcribing...)",
-        timestamp: new Date().toISOString(),
-      },
-    ]);
-
-    try {
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        const base64Video = reader.result.split(",")[1];
-        const videoPayload = { video: base64Video, format: "webm", type: "video" };
-
-        if (!workflowStarted) {
-          setWorkflowStarted(true);
-          pendingFirstInputRef.current = videoPayload;
-          wsRef.current.send(
-            JSON.stringify({
-              type: "start",
-              incident_id: `incident_${Date.now()}`,
-              tenant_id: tenantId,
-              user_id: effectiveUserId,
-              use_case: "",
-              initial_data: buildInitialDataFull(),
-            })
-          );
-        } else if (wsRef.current) {
-          wsRef.current.send(
-            JSON.stringify({
-              type: "user_input",
-              session_id: sessionId,
-              input: videoPayload,
-            })
-          );
-        }
-        setIsProcessing(false);
-      };
-      reader.readAsDataURL(videoBlob);
-    } catch {
-      setIsProcessing(false);
-    }
-  };
-
-  const handleImageCapture = async (base64Image, format) => {
-    setIsProcessing(true);
-    const msgId = `img_${Date.now()}`;
-    const imageDataUrl = `data:image/${format};base64,${base64Image}`;
-    setMessages((prev) => [
-      ...prev,
-      {
-        id: msgId,
-        role: "user",
-        content: "📷 Image (analyzing...)",
-        timestamp: new Date().toISOString(),
-        isImagePending: true,
-        imageUrl: imageDataUrl,
-      },
-    ]);
-    pendingImageMsgIdRef.current = msgId;
-
-    try {
-      const imagePayload = { image: base64Image, format, type: "image" };
-
-      if (!workflowStarted) {
-        setWorkflowStarted(true);
-        pendingFirstInputRef.current = imagePayload;
-        wsRef.current.send(
-          JSON.stringify({
-            type: "start",
-            incident_id: `incident_${Date.now()}`,
-            tenant_id: tenantId,
-            user_id: effectiveUserId,
-            use_case: "",
-            initial_data: buildInitialDataFull(),
-          })
-        );
-      } else if (wsRef.current) {
-        wsRef.current.send(
-          JSON.stringify({
-            type: "user_input",
-            session_id: sessionId,
-            input: imagePayload,
-          })
-        );
-      }
-      setIsProcessing(false);
-    } catch {
-      setIsProcessing(false);
-    }
-  };
-
-  const toggleVoiceMode = () => {
-    if (!sessionId) {
-      alert("Please start an incident report first");
-      return;
-    }
-    setCameraMode(false);
-    setVoiceMode(!voiceMode);
-  };
-
-  const openCameraMode = () => {
-    setVoiceMode(false);
-    setCameraMode(true);
-    setCameraPreview(null);
-  };
-
-  const closeCameraMode = () => {
-    setCameraMode(false);
-    setCameraPreview(null);
-    if (cameraStreamRef.current) {
-      cameraStreamRef.current.getTracks().forEach((track) => track.stop());
-      cameraStreamRef.current = null;
-    }
-  };
-
-  const handleCameraFileSelect = () => cameraFileInputRef.current?.click();
-
-  const handleCameraFileChange = (event) => {
-    const file = event.target.files?.[0];
-    if (file) {
-      const reader = new FileReader();
-      reader.onloadend = () => setCameraPreview(reader.result);
-      reader.readAsDataURL(file);
-    }
-  };
-
-  const startCameraStream = async () => {
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: "environment" },
-      });
-      cameraStreamRef.current = stream;
-      if (cameraVideoRef.current) {
-        cameraVideoRef.current.srcObject = stream;
-      }
-    } catch {
-      alert("Could not access camera. Please upload a file instead.");
-    }
-  };
-
-  const capturePhoto = () => {
-    if (cameraVideoRef.current && cameraCanvasRef.current) {
-      const video = cameraVideoRef.current;
-      const canvas = cameraCanvasRef.current;
-      canvas.width = video.videoWidth;
-      canvas.height = video.videoHeight;
-      canvas.getContext("2d").drawImage(video, 0, 0);
-      setCameraPreview(canvas.toDataURL("image/jpeg"));
-      if (cameraStreamRef.current) {
-        cameraStreamRef.current.getTracks().forEach((track) => track.stop());
-        cameraStreamRef.current = null;
-      }
-    }
-  };
-
-  const sendCameraImage = () => {
-    if (cameraPreview) {
-      const base64Data = cameraPreview.split(",")[1];
-      handleImageCapture(base64Data, "jpeg");
-      closeCameraMode();
-    }
-  };
-
-  const handleVoiceTranscript = async (audioData) => {
-    // Transcribe the audio and place the text in the input box for editing
-    setIsVoiceTranscribing(true);
-    setVoiceMode(false); // Switch back to text mode so user can see the input
-
-    try {
-      // Convert base64 audio to Blob for the transcribe API
-      const byteChars = atob(audioData.audio);
-      const byteArray = new Uint8Array(byteChars.length);
-      for (let i = 0; i < byteChars.length; i++) {
-        byteArray[i] = byteChars.charCodeAt(i);
-      }
-      const audioBlob = new Blob([byteArray], { type: "audio/webm" });
-
-      const result = await transcribeAudio(audioBlob);
-      const transcribedText = result?.text?.trim();
-
-      if (transcribedText) {
-        setInputText(transcribedText);
-      }
-    } catch (err) {
-      // Silently fail — user can still type manually
-    } finally {
-      setIsVoiceTranscribing(false);
     }
   };
 
@@ -1130,9 +858,6 @@ const FloatingChatWidget = forwardRef(function FloatingChatWidget(
           <div
             style={{
               ...styles.messagesContainer,
-              ...(voiceMode || cameraMode
-                ? { filter: "blur(4px)", pointerEvents: "none" }
-                : {}),
             }}
           >
             {messages.length === 0 ? (
@@ -1182,7 +907,7 @@ const FloatingChatWidget = forwardRef(function FloatingChatWidget(
                                 onClick={() =>
                                   handleCategorySelect(
                                     wf.use_case,
-                                    formatUseCaseName(wf.use_case)
+                                    formatUseCaseName(wf.use_case),
                                   )
                                 }
                                 style={{
@@ -1199,13 +924,17 @@ const FloatingChatWidget = forwardRef(function FloatingChatWidget(
                                 }}
                                 onMouseEnter={(e) => {
                                   e.currentTarget.style.borderColor = "#76a0c4";
-                                  e.currentTarget.style.backgroundColor = "#edf5fc";
-                                  e.currentTarget.style.transform = "translateY(-1px)";
+                                  e.currentTarget.style.backgroundColor =
+                                    "#edf5fc";
+                                  e.currentTarget.style.transform =
+                                    "translateY(-1px)";
                                 }}
                                 onMouseLeave={(e) => {
                                   e.currentTarget.style.borderColor = "#e2e8f0";
-                                  e.currentTarget.style.backgroundColor = "white";
-                                  e.currentTarget.style.transform = "translateY(0)";
+                                  e.currentTarget.style.backgroundColor =
+                                    "white";
+                                  e.currentTarget.style.transform =
+                                    "translateY(0)";
                                 }}
                               >
                                 {formatUseCaseName(wf.use_case)}
@@ -1221,7 +950,9 @@ const FloatingChatWidget = forwardRef(function FloatingChatWidget(
                               }}
                             >
                               <button
-                                onClick={() => setShowAllCategories(!showAllCategories)}
+                                onClick={() =>
+                                  setShowAllCategories(!showAllCategories)
+                                }
                                 style={{
                                   display: "inline-flex",
                                   alignItems: "center",
@@ -1241,7 +972,9 @@ const FloatingChatWidget = forwardRef(function FloatingChatWidget(
                                   e.currentTarget.style.color = "#64748b";
                                 }}
                               >
-                                {showAllCategories ? "Show less ▲" : "Show more ▼"}
+                                {showAllCategories
+                                  ? "Show less ▲"
+                                  : "Show more ▼"}
                               </button>
                             </div>
                           )}
@@ -1275,322 +1008,47 @@ const FloatingChatWidget = forwardRef(function FloatingChatWidget(
           {/* Input area */}
           {incidentStarted && (
             <div style={styles.inputContainer}>
-              {voiceMode ? (
-                <div
-                  style={{
-                    display: "flex",
-                    flexDirection: "column",
-                    alignItems: "center",
-                  }}
-                >
-                  <LiveVoiceChat
-                    sessionId={sessionId}
-                    onTranscript={handleVoiceTranscript}
-                    onAudioResponse={() => {}}
-                    isConnected={isConnected}
-                    onStop={() => setVoiceMode(false)}
+              <>
+                <div style={styles.inputWrapper}>
+                  <input
+                    type="text"
+                    style={styles.textInput}
+                    value={inputText}
+                    onChange={(e) => setInputText(e.target.value)}
+                    onKeyDown={handleKeyDown}
+                    placeholder={
+                      phoneCollectionPhase
+                        ? "Enter customer phone number..."
+                        : isReporterSelectionPending
+                          ? "Choose a reporter type..."
+                          : "Type your message..."
+                    }
+                    disabled={!isConnected || isProcessing}
                   />
-                  <div
-                    style={{
-                      display: "flex",
-                      gap: "0.5rem",
-                      padding: "0 1rem 0.75rem",
-                      width: "100%",
-                      justifyContent: "center",
-                    }}
-                  >
-                    {isSpeaking && (
-                      <button
-                        style={{
-                          padding: "0.4rem 1rem",
-                          background: "#fee2e2",
-                          color: "#dc2626",
-                          border: "1px solid #fecaca",
-                          borderRadius: "0.5rem",
-                          cursor: "pointer",
-                          fontSize: "0.75rem",
-                          fontWeight: "600",
-                          transition: "all 0.2s",
-                        }}
-                        onClick={stopTTS}
-                      >
-                        Stop Speaking
-                      </button>
-                    )}
-                    <button
-                      style={{
-                        padding: "0.4rem 1rem",
-                        background: "#f1f5f9",
-                        color: "#475569",
-                        border: "1px solid #e2e8f0",
-                        borderRadius: "0.5rem",
-                        cursor: "pointer",
-                        fontSize: "0.75rem",
-                        fontWeight: "600",
-                        transition: "all 0.2s",
-                        display: "inline-flex",
-                        alignItems: "center",
-                        gap: "0.35rem",
-                      }}
-                      onClick={toggleVoiceMode}
-                      onMouseEnter={(e) => {
-                        e.currentTarget.style.background = "#e2e8f0";
-                      }}
-                      onMouseLeave={(e) => {
-                        e.currentTarget.style.background = "#f1f5f9";
-                      }}
-                    >
-                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ width: "0.85rem", height: "0.85rem" }}>
-                        <line x1="17" y1="10" x2="3" y2="10" />
-                        <line x1="21" y1="6" x2="3" y2="6" />
-                        <line x1="21" y1="14" x2="3" y2="14" />
-                        <line x1="17" y1="18" x2="3" y2="18" />
-                      </svg>
-                      Switch to Text
-                    </button>
-                  </div>
-                </div>
-              ) : cameraMode ? (
-                <div
-                  style={{
-                    display: "flex",
-                    flexDirection: "column",
-                    alignItems: "center",
-                    padding: "1.5rem 1rem",
-                    gap: "1rem",
-                  }}
-                >
-                  <input ref={cameraFileInputRef} type="file" accept="image/*" style={{ display: "none" }} onChange={handleCameraFileChange} />
-                  <canvas ref={cameraCanvasRef} style={{ display: "none" }} />
-
-                  {!cameraPreview && !cameraStreamRef.current?.active && (
-                    <>
-                      <div style={{ fontSize: "0.8125rem", fontWeight: "600", color: "#475569", textAlign: "center" }}>
-                        Upload Image
-                      </div>
-                      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.75rem", width: "100%", maxWidth: "280px" }}>
-                        <button
-                          style={{ padding: "1.25rem 0.75rem", borderRadius: "0.75rem", border: "1.5px solid #e2e8f0", backgroundColor: "white", cursor: "pointer", transition: "all 0.2s", display: "flex", flexDirection: "column", alignItems: "center", gap: "0.5rem" }}
-                          onClick={handleCameraFileSelect}
-                          onMouseEnter={(e) => { e.currentTarget.style.borderColor = "#030304"; e.currentTarget.style.backgroundColor = "#edf5fc"; }}
-                          onMouseLeave={(e) => { e.currentTarget.style.borderColor = "#e2e8f0"; e.currentTarget.style.backgroundColor = "white"; }}
-                        >
-                          <div style={{ width: "2.5rem", height: "2.5rem", borderRadius: "0.75rem", background: primaryGradient, display: "flex", alignItems: "center", justifyContent: "center" }}>
-                            <svg viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ width: "1.25rem", height: "1.25rem" }}>
-                              <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
-                            </svg>
-                          </div>
-                          <span style={{ fontSize: "0.75rem", fontWeight: "600", color: "#0f172a" }}>Choose File</span>
-                        </button>
-                        <button
-                          style={{ padding: "1.25rem 0.75rem", borderRadius: "0.75rem", border: "1.5px solid #e2e8f0", backgroundColor: "white", cursor: "pointer", transition: "all 0.2s", display: "flex", flexDirection: "column", alignItems: "center", gap: "0.5rem" }}
-                          onClick={startCameraStream}
-                          onMouseEnter={(e) => { e.currentTarget.style.borderColor = "#030304"; e.currentTarget.style.backgroundColor = "#edf5fc"; }}
-                          onMouseLeave={(e) => { e.currentTarget.style.borderColor = "#e2e8f0"; e.currentTarget.style.backgroundColor = "white"; }}
-                        >
-                          <div style={{ width: "2.5rem", height: "2.5rem", borderRadius: "0.75rem", background: primaryGradient, display: "flex", alignItems: "center", justifyContent: "center" }}>
-                            <svg viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ width: "1.25rem", height: "1.25rem" }}>
-                              <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z" />
-                              <circle cx="12" cy="13" r="4" />
-                            </svg>
-                          </div>
-                          <span style={{ fontSize: "0.75rem", fontWeight: "600", color: "#0f172a" }}>Take Photo</span>
-                        </button>
-                      </div>
-                    </>
-                  )}
-
-                  {cameraStreamRef.current?.active && !cameraPreview && (
-                    <>
-                      <video ref={cameraVideoRef} autoPlay playsInline style={{ width: "100%", maxWidth: "300px", borderRadius: "0.75rem" }} />
-                      <div style={{ display: "flex", gap: "0.5rem" }}>
-                        <button style={{ padding: "0.5rem 1rem", borderRadius: "0.5rem", border: "none", fontSize: "0.75rem", fontWeight: "600", cursor: "pointer", background: primaryGradient, color: "white" }} onClick={capturePhoto}>Capture</button>
-                        <button style={{ padding: "0.5rem 1rem", borderRadius: "0.5rem", border: "none", fontSize: "0.75rem", fontWeight: "600", cursor: "pointer", backgroundColor: "#f1f5f9", color: "#64748b" }} onClick={closeCameraMode}>Cancel</button>
-                      </div>
-                    </>
-                  )}
-
-                  {cameraPreview && (
-                    <>
-                      <img src={cameraPreview} alt="Preview" style={{ width: "100%", maxWidth: "300px", borderRadius: "0.75rem" }} />
-                      <div style={{ display: "flex", gap: "0.5rem" }}>
-                        <button style={{ padding: "0.5rem 1rem", borderRadius: "0.5rem", border: "none", fontSize: "0.75rem", fontWeight: "600", cursor: "pointer", background: primaryGradient, color: "white" }} onClick={sendCameraImage}>Send Image</button>
-                        <button style={{ padding: "0.5rem 1rem", borderRadius: "0.5rem", border: "none", fontSize: "0.75rem", fontWeight: "600", cursor: "pointer", backgroundColor: "#f1f5f9", color: "#64748b" }} onClick={() => setCameraPreview(null)}>Retake</button>
-                        <button style={{ padding: "0.5rem 1rem", borderRadius: "0.5rem", border: "none", fontSize: "0.75rem", fontWeight: "600", cursor: "pointer", backgroundColor: "#f1f5f9", color: "#64748b" }} onClick={closeCameraMode}>Cancel</button>
-                      </div>
-                    </>
-                  )}
 
                   <button
-                    style={{ padding: "0.4rem 1rem", background: "#f1f5f9", color: "#475569", border: "1px solid #e2e8f0", borderRadius: "0.5rem", cursor: "pointer", fontSize: "0.75rem", fontWeight: "600", transition: "all 0.2s", display: "inline-flex", alignItems: "center", gap: "0.35rem" }}
-                    onClick={closeCameraMode}
-                    onMouseEnter={(e) => { e.currentTarget.style.background = "#e2e8f0"; }}
-                    onMouseLeave={(e) => { e.currentTarget.style.background = "#f1f5f9"; }}
-                  >
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ width: "0.85rem", height: "0.85rem" }}>
-                      <line x1="17" y1="10" x2="3" y2="10" />
-                      <line x1="21" y1="6" x2="3" y2="6" />
-                      <line x1="21" y1="14" x2="3" y2="14" />
-                      <line x1="17" y1="18" x2="3" y2="18" />
-                    </svg>
-                    Switch to Text
-                  </button>
-                </div>
-              ) : (
-                <>
-                  <div style={styles.inputWrapper}>
-                    <input
-                      type="text"
-                      style={styles.textInput}
-                      value={inputText}
-                      onChange={(e) => setInputText(e.target.value)}
-                      onKeyDown={handleKeyDown}
-                      placeholder={
-                        isVoiceTranscribing
-                          ? "Transcribing voice..."
-                          : phoneCollectionPhase
-                            ? "Enter customer phone number..."
-                            : isReporterSelectionPending
-                              ? "Choose a reporter type..."
-                              : "Type your message..."
-                      }
-                      disabled={!isConnected || isProcessing || isVoiceTranscribing}
-                    />
-
-                    <button
-                      type="button"
-                      onClick={toggleVoiceMode}
-                      disabled={!isConnected || isProcessing || isVoiceTranscribing}
-                      title="Voice mode"
-                      style={{
-                        display: "inline-flex",
-                        alignItems: "center",
-                        justifyContent: "center",
-                        width: "2.5rem",
-                        height: "2.5rem",
-                        borderRadius: "0.75rem",
-                        border: "1px solid #cbd5e1",
-                        backgroundColor: "white",
-                        color: "#475569",
-                        cursor: !isConnected || isProcessing || isVoiceTranscribing ? "not-allowed" : "pointer",
-                        opacity: !isConnected || isProcessing || isVoiceTranscribing ? 0.5 : 1,
-                        transition: "all 0.2s",
-                      }}
-                      onMouseEnter={(e) => {
-                        if (!e.currentTarget.disabled) {
-                          e.currentTarget.style.borderColor = "#030304";
-                          e.currentTarget.style.color = "#030304";
-                        }
-                      }}
-                      onMouseLeave={(e) => {
-                        if (!e.currentTarget.disabled) {
-                          e.currentTarget.style.borderColor = "#cbd5e1";
-                          e.currentTarget.style.color = "#475569";
-                        }
-                      }}
-                    >
-                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" style={{ width: "1.25rem", height: "1.25rem" }} aria-hidden="true">
-                        <path d="M12 15a3 3 0 0 0 3-3V7a3 3 0 0 0-6 0v5a3 3 0 0 0 3 3Z" />
-                        <path d="M5 11v1a7 7 0 0 0 14 0v-1" />
-                        <path d="M12 19v3" />
-                      </svg>
-                    </button>
-
-                    <VideoRecorder
-                      onRecordingComplete={handleVideoRecorded}
-                      isRecording={isVideoRecording}
-                      setIsRecording={setIsVideoRecording}
-                      disabled={!isConnected || isProcessing || isVoiceTranscribing}
-                    />
-
-                    <button
-                      style={{
-                        display: "inline-flex",
-                        alignItems: "center",
-                        justifyContent: "center",
-                        width: "2.5rem",
-                        height: "2.5rem",
-                        borderRadius: "0.75rem",
-                        border: "1px solid #cbd5e1",
-                        backgroundColor: "white",
-                        color: "#475569",
-                        cursor: !isConnected || isProcessing ? "not-allowed" : "pointer",
-                        opacity: !isConnected || isProcessing ? 0.5 : 1,
-                        transition: "all 0.2s",
-                      }}
-                      onClick={openCameraMode}
-                      disabled={!isConnected || isProcessing || isVoiceTranscribing}
-                      title="Upload image"
-                      onMouseEnter={(e) => {
-                        if (!e.currentTarget.disabled) {
-                          e.currentTarget.style.borderColor = "#030304";
-                          e.currentTarget.style.color = "#030304";
-                        }
-                      }}
-                      onMouseLeave={(e) => {
-                        if (!e.currentTarget.disabled) {
-                          e.currentTarget.style.borderColor = "#cbd5e1";
-                          e.currentTarget.style.color = "#475569";
-                        }
-                      }}
-                    >
-                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" style={{ width: "1.25rem", height: "1.25rem" }} aria-hidden="true">
-                        <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z" />
-                        <circle cx="12" cy="13" r="4" />
-                      </svg>
-                    </button>
-
-                    <button
-                      style={{ ...styles.iconButton, ...styles.sendButton }}
-                      onClick={sendMessage}
-                      disabled={!isConnected || !inputText.trim() || isProcessing}
-                      onMouseEnter={(e) => {
-                        if (!e.target.disabled) e.target.style.transform = "scale(1.05)";
-                      }}
-                      onMouseLeave={(e) => {
-                        e.target.style.transform = "scale(1)";
-                      }}
-                    >
-                      ➤
-                    </button>
-                  </div>
-                  <div
-                    style={{
-                      display: "flex",
-                      justifyContent: "space-between",
-                      alignItems: "center",
-                      marginTop: "0.5rem",
+                    style={{ ...styles.iconButton, ...styles.sendButton }}
+                    onClick={sendMessage}
+                    disabled={!isConnected || !inputText.trim() || isProcessing}
+                    onMouseEnter={(e) => {
+                      if (!e.target.disabled)
+                        e.target.style.transform = "scale(1.05)";
+                    }}
+                    onMouseLeave={(e) => {
+                      e.target.style.transform = "scale(1)";
                     }}
                   >
-                    <p style={styles.hint}>
-                      {isProcessing
-                        ? "Processing..."
-                        : isReporterSelectionPending
-                          ? "Choose a reporter type to continue"
-                          : "Enter to send"}
-                    </p>
-                    <button
-                      style={{
-                        padding: "0.375rem 0.75rem",
-                        background: primaryGradient,
-                        color: "white",
-                        border: "none",
-                        borderRadius: "0.375rem",
-                        cursor: "pointer",
-                        fontSize: "0.75rem",
-                        fontWeight: "600",
-                        display: "flex",
-                        alignItems: "center",
-                        gap: "0.375rem",
-                      }}
-                      onClick={toggleVoiceMode}
-                      disabled={!isConnected}
-                    >
-                      Voice Mode
-                    </button>
-                  </div>
-                </>
-              )}
+                    ➤
+                  </button>
+                </div>
+                <p style={styles.hint}>
+                  {isProcessing
+                    ? "Processing..."
+                    : isReporterSelectionPending
+                      ? "Choose a reporter type to continue"
+                      : "Enter to send"}
+                </p>
+              </>
             </div>
           )}
         </div>

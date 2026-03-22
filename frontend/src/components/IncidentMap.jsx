@@ -158,7 +158,7 @@ const IncidentMap = ({
   selectedIncident,
   trackedAgent,
 }) => {
-  const [center, setCenter] = useState([28.6139, 77.209]);
+  const [center, setCenter] = useState([54.5, -3.0]);
   const [zoom, setZoom] = useState(6);
 
   const incidentsWithLocation = useMemo(
