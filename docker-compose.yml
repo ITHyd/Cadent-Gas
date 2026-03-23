@@ -5,12 +5,13 @@ services:
     restart: unless-stopped
     environment:
       MONGO_INITDB_DATABASE: gas_incident_platform
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_ROOT_USER:-mongoadmin}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_ROOT_PASSWORD}
     volumes:
       - mongo_data:/data/db
-    ports:
-      - "27017:27017"
+    # No ports exposed — mongo is only reachable inside the Docker network
     healthcheck:
-      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      test: ["CMD", "mongosh", "--username", "${MONGO_ROOT_USER:-mongoadmin}", "--password", "${MONGO_ROOT_PASSWORD}", "--authenticationDatabase", "admin", "--eval", "db.adminCommand('ping')"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -23,7 +24,7 @@ services:
     env_file:
       - .env.docker
     environment:
-      MONGODB_URI: mongodb://mongo:27017
+      MONGODB_URI: mongodb://${MONGO_ROOT_USER:-mongoadmin}:${MONGO_ROOT_PASSWORD}@mongo:27017/?authSource=admin
     volumes:
       - uploads_data:/app/uploads
     ports:

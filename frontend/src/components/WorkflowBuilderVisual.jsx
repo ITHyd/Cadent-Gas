@@ -613,7 +613,10 @@ const autoLayoutNodes = (nodes, edges, startNodeId, force = false) => {
 
   // Tree-aware layout: compute subtree sizes so branches don't overlap
   const H_GAP = 250;
-  const V_GAP = 120;
+  const V_GAP = 100;
+  // Cap how much vertical space a single branch can claim, so deep subtrees
+  // don't push sibling branches (True/False) far apart
+  const MAX_BRANCH_LEAVES = 3;
 
   // Build tree from BFS
   const childrenMap = {};
@@ -652,8 +655,9 @@ const autoLayoutNodes = (nodes, edges, startNodeId, force = false) => {
     const children = childrenMap[id] || [];
     const size = subtreeSize[id] || 1;
 
-    // Center this node within its allocated vertical band
-    const bandHeight = (size - 1) * V_GAP;
+    // Center this node within its allocated vertical band (capped)
+    const clampedSelf = Math.min(size, MAX_BRANCH_LEAVES * (children.length || 1));
+    const bandHeight = (clampedSelf - 1) * V_GAP;
     positionMap[id] = {
       x: 60 + level * H_GAP,
       y: yOffset + bandHeight / 2,
@@ -663,11 +667,13 @@ const autoLayoutNodes = (nodes, edges, startNodeId, force = false) => {
       // Single child: place at same Y (no vertical spread)
       assignPositions(children[0], level + 1, yOffset);
     } else {
-      // Multiple children: stack them, each gets space proportional to its subtree
+      // Multiple children: stack them, cap each branch's claimed height so
+      // True/False siblings don't end up far apart on deep workflows
       let childY = yOffset;
       for (const child of children) {
         assignPositions(child, level + 1, childY);
-        childY += (subtreeSize[child] || 1) * V_GAP;
+        const clampedSize = Math.min(subtreeSize[child] || 1, MAX_BRANCH_LEAVES);
+        childY += clampedSize * V_GAP;
       }
     }
   };
