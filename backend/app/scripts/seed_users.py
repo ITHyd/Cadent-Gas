@@ -5,6 +5,7 @@ import os
 from datetime import datetime
 
 import bcrypt
+from pymongo.errors import DuplicateKeyError
 
 logger = logging.getLogger(__name__)
 
@@ -145,8 +146,15 @@ async def seed_users(db):
         if user.get("location"):
             doc["location"] = user["location"]
 
-        await db.users.insert_one(doc)
-        inserted += 1
+        try:
+            await db.users.insert_one(doc)
+            inserted += 1
+        except DuplicateKeyError:
+            logger.warning(
+                "Skipping seed user %s because it already exists under a unique constraint",
+                user["user_id"],
+            )
+            continue
 
     await _migrate_admin_credentials(db)
 
