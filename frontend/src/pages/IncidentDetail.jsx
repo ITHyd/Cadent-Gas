@@ -1138,11 +1138,24 @@ const IncidentDetail = () => {
                 <h3 style={{ fontSize: '0.75rem', fontWeight: '700', color: T.textMuted, textTransform: 'uppercase', letterSpacing: '0.06em', margin: '0' }}>Incident Details</h3>
                 {(() => {
                   const kbValidation = incident.structured_data?._kb_validation || incident.kb_validation_details;
-                  if (!kbValidation || !kbValidation.verdict || kbValidation.verdict === 'unknown') return null;
+                  const rawVerdict = (kbValidation?.verdict || kbValidation?.best_match_type || incident.kb_match_type || 'unknown').toString().toLowerCase();
+                  if (!kbValidation && !incident.kb_match_type) return null;
 
-                  const isTrue = kbValidation.verdict === 'true';
-                  const confidence = kbValidation.confidence || 0;
+                  const isTrue = rawVerdict === 'true';
+                  const isFalse = rawVerdict === 'false';
+                  const isAdminConfirmed = rawVerdict === 'admin_confirmed';
+                  const confidence = kbValidation?.confidence ?? incident.kb_similarity_score ?? 0;
                   const percentage = Math.round(confidence * 100);
+                  const label = isTrue
+                    ? 'True Incident'
+                    : isFalse
+                      ? 'False Report'
+                      : isAdminConfirmed
+                        ? 'Admin Confirmed'
+                        : 'No strong KB match';
+                  const bg = isTrue ? '#dcfce7' : isFalse ? '#fef3c7' : '#eff6ff';
+                  const color = isTrue ? '#166534' : isFalse ? '#92400e' : '#1d4ed8';
+                  const border = isTrue ? '#86efac' : isFalse ? '#fcd34d' : '#bfdbfe';
 
                   return (
                     <span style={{
@@ -1150,14 +1163,14 @@ const IncidentDetail = () => {
                       borderRadius: '8px',
                       fontSize: '0.85rem',
                       fontWeight: '700',
-                      background: isTrue ? '#dcfce7' : '#fef3c7',
-                      color: isTrue ? '#166534' : '#92400e',
-                      border: isTrue ? '1px solid #86efac' : '1px solid #fcd34d',
+                      background: bg,
+                      color,
+                      border: `1px solid ${border}`,
                       display: 'inline-flex',
                       alignItems: 'center',
                       gap: '6px'
                     }}>
-                      {isTrue ? 'True Incident' : 'False Report'} - {percentage}%
+                      {label}{(kbValidation?.confidence != null || incident.kb_similarity_score != null) ? ` - ${percentage}%` : ''}
                     </span>
                   );
                 })()}

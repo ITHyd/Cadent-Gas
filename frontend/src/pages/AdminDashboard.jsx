@@ -2142,14 +2142,30 @@ const AdminDashboard = () => {
                     )}
 
                     {/* KB Validation */}
-                    {kbVal && kbVal.verdict !== 'unknown' && (() => {
+                    {kbVal && (() => {
+                      const rawVerdict = (kbVal.verdict || kbVal.best_match_type || inc.kb_match_type || 'unknown').toString().toLowerCase();
+                      const normalizedVerdict = ['true', 'false', 'admin_confirmed'].includes(rawVerdict) ? rawVerdict : 'unknown';
                       // Calculate max scores from all_matches array
                       const allMatches = kbVal.all_matches || [];
                       const trueMatches = allMatches.filter(m => m.kb_type === 'true');
                       const falseMatches = allMatches.filter(m => m.kb_type === 'false');
 
-                      const maxTrueScore = trueMatches.length > 0 ? Math.max(...trueMatches.map(m => m.score || 0)) : 0;
-                      const maxFalseScore = falseMatches.length > 0 ? Math.max(...falseMatches.map(m => m.score || 0)) : 0;
+                      const avgTrueScore = trueMatches.length > 0
+                        ? trueMatches.reduce((sum, match) => sum + (match.score || 0), 0) / trueMatches.length
+                        : 0;
+                      const avgFalseScore = falseMatches.length > 0
+                        ? falseMatches.reduce((sum, match) => sum + (match.score || 0), 0) / falseMatches.length
+                        : 0;
+                      const badgeBg = normalizedVerdict === 'true' ? '#ecfdf5' : normalizedVerdict === 'false' ? '#fef2f2' : '#eff6ff';
+                      const badgeColor = normalizedVerdict === 'true' ? '#047857' : normalizedVerdict === 'false' ? '#b91c1c' : '#1d4ed8';
+                      const badgeBorder = normalizedVerdict === 'true' ? '#bbf7d0' : normalizedVerdict === 'false' ? '#fecaca' : '#bfdbfe';
+                      const badgeLabel = normalizedVerdict === 'true'
+                        ? 'TRUE INCIDENT'
+                        : normalizedVerdict === 'false'
+                          ? 'FALSE REPORT'
+                          : normalizedVerdict === 'admin_confirmed'
+                            ? 'ADMIN CONFIRMED'
+                            : 'NO STRONG KB MATCH';
 
                       return (
                         <div className="panel-soft" style={{ padding: '12px 14px', borderRadius: '12px' }}>
@@ -2157,11 +2173,11 @@ const AdminDashboard = () => {
                           <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '10px' }}>
                             <span style={{
                               padding: '4px 12px', borderRadius: '999px', fontSize: '0.82rem', fontWeight: 700,
-                              background: kbVal.verdict === 'true' ? '#ecfdf5' : '#fef2f2',
-                              color: kbVal.verdict === 'true' ? '#047857' : '#b91c1c',
-                              border: `1px solid ${kbVal.verdict === 'true' ? '#bbf7d0' : '#fecaca'}`,
+                              background: badgeBg,
+                              color: badgeColor,
+                              border: `1px solid ${badgeBorder}`,
                             }}>
-                              {kbVal.verdict === 'true' ? 'TRUE INCIDENT' : 'FALSE REPORT'}
+                              {badgeLabel}
                             </span>
                             {kbVal.confidence != null && (
                               <span style={{ fontSize: '0.78rem', color: '#64748b' }}>
@@ -2172,16 +2188,21 @@ const AdminDashboard = () => {
                           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '6px 16px', fontSize: '0.82rem' }}>
                             <div>
                               <span style={{ color: '#64748b' }}>True KB Score:</span>{' '}
-                              <strong style={{ color: '#047857' }}>{(maxTrueScore * 100).toFixed(0)}%</strong>
+                              <strong style={{ color: '#047857' }}>{(avgTrueScore * 100).toFixed(0)}%</strong>
                             </div>
                             <div>
                               <span style={{ color: '#64748b' }}>False KB Score:</span>{' '}
-                              <strong style={{ color: '#b91c1c' }}>{(maxFalseScore * 100).toFixed(0)}%</strong>
+                              <strong style={{ color: '#b91c1c' }}>{(avgFalseScore * 100).toFixed(0)}%</strong>
                             </div>
                           </div>
                           {kbVal.explanation && (
                             <p style={{ margin: '8px 0 0', fontSize: '0.82rem', color: '#475569', background: '#f8fafc', padding: '8px 10px', borderRadius: '8px', lineHeight: 1.5 }}>
                               {kbVal.explanation}
+                            </p>
+                          )}
+                          {!kbVal.explanation && normalizedVerdict === 'unknown' && (
+                            <p style={{ margin: '8px 0 0', fontSize: '0.82rem', color: '#475569', background: '#f8fafc', padding: '8px 10px', borderRadius: '8px', lineHeight: 1.5 }}>
+                              KB validation ran, but the current incident did not produce a strong true or false knowledge-base match.
                             </p>
                           )}
 
@@ -2367,15 +2388,32 @@ const AdminDashboard = () => {
                             </span>
                           </div>
                         )}
-                        {inc.kb_match_type && inc.kb_match_type !== 'unknown' && (
+                        {(inc.kb_match_type || kbVal?.verdict || kbVal?.best_match_type) && (() => {
+                          const rawVerdict = (kbVal?.verdict || kbVal?.best_match_type || inc.kb_match_type || 'unknown').toString().toLowerCase();
+                          const verdictLabel = rawVerdict === 'true'
+                            ? 'True Incident'
+                            : rawVerdict === 'false'
+                              ? 'False Report'
+                              : rawVerdict === 'admin_confirmed'
+                                ? 'Admin Confirmed'
+                                : 'Unknown / No strong match';
+                          const verdictColor = rawVerdict === 'true'
+                            ? '#047857'
+                            : rawVerdict === 'false'
+                              ? '#b91c1c'
+                              : rawVerdict === 'admin_confirmed'
+                                ? '#166534'
+                                : '#1d4ed8';
+                          return (
                           <div>
                             <span style={{ color: '#64748b' }}>KB Verdict:</span>{' '}
-                            <strong style={{ color: inc.kb_match_type === 'true' ? '#047857' : '#b91c1c' }}>
-                              {inc.kb_match_type === 'true' ? 'True Incident' : 'False Report'}
+                            <strong style={{ color: verdictColor }}>
+                              {verdictLabel}
                             </strong>
                           </div>
-                        )}
-                        {inc.kb_similarity_score != null && inc.kb_match_type !== 'unknown' && (
+                          );
+                        })()}
+                        {inc.kb_similarity_score != null && (
                           <div><span style={{ color: '#64748b' }}>KB Similarity:</span> <strong>{(inc.kb_similarity_score * 100).toFixed(0)}%</strong></div>
                         )}
                         <div>
@@ -2486,31 +2524,39 @@ const AdminDashboard = () => {
                 </div>
 
                 {/* KB Validation Review Panel */}
-                {inc.kb_match_type && inc.kb_match_type !== 'admin_confirmed' && inc.kb_match_type !== 'unknown' && (() => {
+                {(inc.kb_match_type || inc.kb_validation_details || kbVal) && (() => {
                   const kbDetails = inc.kb_validation_details || kbVal || {};
-                  const rawVerdict = (kbDetails.verdict || inc.kb_match_type || '').toString().toLowerCase();
-                  const normalizedVerdict = ['true', 'false'].includes(rawVerdict) ? rawVerdict : null;
-
-                  if (!normalizedVerdict) return null;
+                  const rawVerdict = (kbDetails.verdict || kbDetails.best_match_type || inc.kb_match_type || 'unknown').toString().toLowerCase();
+                  const normalizedVerdict = ['true', 'false', 'admin_confirmed'].includes(rawVerdict) ? rawVerdict : 'unknown';
 
                   // Calculate max scores from all_matches array
                   const allMatches = kbDetails.all_matches || [];
                   const trueMatches = allMatches.filter(m => m.kb_type === 'true');
                   const falseMatches = allMatches.filter(m => m.kb_type === 'false');
 
-                  const maxTrueScore = trueMatches.length > 0 ? Math.max(...trueMatches.map(m => m.score || 0)) : 0;
-                  const maxFalseScore = falseMatches.length > 0 ? Math.max(...falseMatches.map(m => m.score || 0)) : 0;
+                  const avgTrueScore = trueMatches.length > 0
+                    ? trueMatches.reduce((sum, match) => sum + (match.score || 0), 0) / trueMatches.length
+                    : 0;
+                  const avgFalseScore = falseMatches.length > 0
+                    ? falseMatches.reduce((sum, match) => sum + (match.score || 0), 0) / falseMatches.length
+                    : 0;
 
-                  let trueScore = Math.round(maxTrueScore * 100);
-                  let falseScore = Math.round(maxFalseScore * 100);
+                  let trueScore = Math.round(avgTrueScore * 100);
+                  let falseScore = Math.round(avgFalseScore * 100);
 
                   trueScore = Math.max(0, Math.min(100, trueScore));
                   falseScore = Math.max(0, Math.min(100, falseScore));
 
                   const explanation = kbDetails.explanation || '';
-                  const panelBorder = normalizedVerdict === 'true' ? '#bbf7d0' : '#fecaca';
-                  const verdictColor = normalizedVerdict === 'true' ? '#047857' : '#b91c1c';
-                  const verdictLabel = normalizedVerdict === 'true' ? 'Likely Valid Incident' : 'Likely False Report';
+                  const panelBorder = normalizedVerdict === 'true' ? '#bbf7d0' : normalizedVerdict === 'false' ? '#fecaca' : '#bfdbfe';
+                  const verdictColor = normalizedVerdict === 'true' ? '#047857' : normalizedVerdict === 'false' ? '#b91c1c' : '#1d4ed8';
+                  const verdictLabel = normalizedVerdict === 'true'
+                    ? 'Likely Valid Incident'
+                    : normalizedVerdict === 'false'
+                      ? 'Likely False Report'
+                      : normalizedVerdict === 'admin_confirmed'
+                        ? 'Admin Confirmed Valid'
+                        : 'Validation Completed Without Strong Match';
 
                   return (
                     <div style={{ padding: '12px 20px', borderTop: `2px solid ${panelBorder}`, background: '#ffffff' }}>
@@ -2532,9 +2578,14 @@ const AdminDashboard = () => {
                           {explanation}
                         </div>
                       )}
+                      {!explanation && normalizedVerdict === 'unknown' && (
+                        <div style={{ fontSize: '0.78rem', color: '#475569', fontStyle: 'italic', marginBottom: '10px', lineHeight: 1.4 }}>
+                          KB validation ran successfully, but there was not enough evidence to classify this incident as a strong true or false knowledge-base match.
+                        </div>
+                      )}
 
                       {/* Action buttons */}
-                      {inc.status === 'new' && (
+                      {inc.status === 'new' && normalizedVerdict !== 'admin_confirmed' && (
                         <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
                           <button type="button" className="secondary-btn" style={{ fontSize: '0.78rem', padding: '6px 14px', borderColor: '#86efac', color: '#047857', background: '#ecfdf5', fontWeight: 700 }} onClick={() => handleConfirmValid(inc.incident_id)}>
                             Confirm Valid & Proceed

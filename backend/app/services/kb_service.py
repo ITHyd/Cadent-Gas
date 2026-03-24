@@ -1185,7 +1185,7 @@ class KBService:
             {
                 "true_kb_match": float (0-1),
                 "false_kb_match": float (0-1),
-                "best_match_type": "true" | "false" | "unknown",
+                "best_match_type": "true" | "false",
                 "best_match_id": str,
                 "confidence_adjustment": float (-0.3 to +0.3),
                 "explanation": str,
@@ -1211,14 +1211,48 @@ class KBService:
 
         winning_confidence = 0.0
 
-        # Determine best match type
+        # Determine best match type.
+        # We always produce a binary verdict using the stronger side. If the
+        # best scores tie, use broader support first and specificity second.
         matched_entry = None
-        if true_score > false_score and true_score > 0.6:
+        true_support = self._support_score(all_true_matches)
+        false_support = self._support_score(all_false_matches)
+        true_specificity = sum(self._indicator_weight(key) for key in (true_match or {}).get("key_indicators", {}))
+        false_specificity = sum(self._indicator_weight(key) for key in (false_match or {}).get("key_indicators", {}))
+
+        if true_score > false_score:
+            choose_true = True
+        elif false_score > true_score:
+            choose_true = False
+        elif true_support > false_support:
+            choose_true = True
+        elif false_support > true_support:
+            choose_true = False
+        elif true_specificity > false_specificity:
+            choose_true = True
+        else:
+            # Exact or unresolved tie: default to false so ambiguous cases do not
+            # drift into a true incident classification.
+            choose_true = False
+
+        if choose_true:
             match_type = "true"
             best_match_id = true_match["kb_id"] if true_match else None
             winning_confidence = true_score
-            confidence_adj = min(0.3, (true_score - 0.5) * 0.6)  # +0 to +0.3
-            explanation = f"Similar to verified true incident (confidence: {true_score:.2f})"
+            confidence_adj = min(0.3, max(0.0, (true_score - 0.5) * 0.6))  # +0 to +0.3
+            if true_score == false_score and true_support != false_support:
+                explanation = (
+                    f"Best true and false scores tied at {true_score:.2f}; "
+                    f"classified as true because average true support ({true_support:.2f}) "
+                    f"exceeded false support ({false_support:.2f})"
+                )
+            elif true_score == false_score:
+                explanation = (
+                    f"Best true and false scores tied at {true_score:.2f}; "
+                    f"classified as true because the best true KB entry was at least as specific as the false match"
+                )
+            else:
+                explanation = f"Classified as true incident because the best true KB match ({true_score:.2f}) exceeded the best false match ({false_score:.2f})"
             # Include matched entry details
             if true_match:
                 matched_entry = {
@@ -1231,12 +1265,24 @@ class KBService:
                     "tags": true_match.get("tags", []),
                     "reason": true_match.get("root_cause", "")
                 }
-        elif false_score > true_score and false_score > 0.6:
+        else:
             match_type = "false"
             best_match_id = false_match["kb_id"] if false_match else None
             winning_confidence = false_score
-            confidence_adj = -min(0.3, (false_score - 0.5) * 0.6)  # -0.3 to -0
-            explanation = f"Similar to known false positive (confidence: {false_score:.2f})"
+            confidence_adj = -min(0.3, max(0.0, (false_score - 0.5) * 0.6))  # -0.3 to -0
+            if true_score == false_score and false_support == true_support and false_specificity >= true_specificity:
+                explanation = (
+                    f"Best true and false scores tied at {false_score:.2f}; "
+                    f"classified as false because support and specificity did not clearly exceed the false side"
+                )
+            elif true_score == false_score:
+                explanation = (
+                    f"Best true and false scores tied at {false_score:.2f}; "
+                    f"classified as false because average false support ({false_support:.2f}) "
+                    f"exceeded true support ({true_support:.2f})"
+                )
+            else:
+                explanation = f"Classified as false incident because the best false KB match ({false_score:.2f}) exceeded the best true match ({true_score:.2f})"
             # Include matched entry details for false incidents
             if false_match:
                 matched_entry = {
@@ -1249,12 +1295,6 @@ class KBService:
                     "tags": false_match.get("tags", []),
                     "reason": false_match.get("false_positive_reason", "")
                 }
-        else:
-            match_type = "unknown"
-            best_match_id = None
-            confidence_adj = 0.0
-            explanation = "No strong KB match found, using model predictions only"
-
         result = {
             "true_kb_match": true_score,
             "false_kb_match": false_score,
@@ -1374,25 +1414,112 @@ class KBService:
     # KB key_indicators (e.g. "intermittent_chirp": True).
     _WORKFLOW_TO_KB_MAP = {
         # CO alarm workflow fields → KB indicator keys
-        "intermittent_chirp": lambda d: "chirp" in (d.get("alarm_sound_pattern") or "").lower() or "every 30" in (d.get("alarm_sound_pattern") or "").lower(),
+        "intermittent_chirp": lambda d: any(
+            token in (d.get("alarm_sound_pattern") or "").lower()
+            for token in ("chirp", "every 30", "every 48", "every minute", "every 60", "single beep")
+        ) or any(
+            token in d.get("_text_blob", "")
+            for token in ("low battery", "single beep every", "chirp every", "intermittent beep", "intermittent beeping")
+        ),
         "every_30_60_seconds": lambda d: "30-60" in (d.get("alarm_sound_pattern") or "") or "every 30" in (d.get("alarm_sound_pattern") or "").lower(),
         "continuous_beeping": lambda d: "continuous" in (d.get("alarm_sound_pattern") or "").lower() or "non-stop" in (d.get("alarm_sound_pattern") or "").lower(),
-        "four_beep_pattern": lambda d: "4 loud beeps" in (d.get("alarm_sound_pattern") or "").lower() or "4 beeps" in (d.get("alarm_sound_pattern") or "").lower(),
+        "four_beep_pattern": lambda d: "4 loud beeps" in (d.get("alarm_sound_pattern") or "").lower() or "4 beeps" in (d.get("alarm_sound_pattern") or "").lower() or "4 quick beeps" in (d.get("_text_blob", "")),
         "alarm_stopped": lambda d: "stopped" in (d.get("alarm_sound_pattern") or "").lower(),
         "no_symptoms": lambda d: "no symptom" in (d.get("co_symptoms") or "").lower(),
         "symptoms_present": lambda d: "feel unwell" in (d.get("co_symptoms") or "").lower() or "headache" in (d.get("co_symptoms") or "").lower(),
         "multiple_symptoms": lambda d: "multiple" in (d.get("co_symptoms") or "").lower(),
-        "battery_low": lambda d: "chirp" in (d.get("alarm_sound_pattern") or "").lower() and "no symptom" in (d.get("co_symptoms") or "").lower(),
-        "alarm_over_7_years": lambda d: "over 7" in (d.get("alarm_age") or "").lower() or "expired" in (d.get("alarm_age") or "").lower(),
-        "alarm_out_of_date": lambda d: "over 7" in (d.get("alarm_age") or "").lower() or "expired" in (d.get("alarm_age") or "").lower(),
+        "battery_low": lambda d: (
+            "chirp" in (d.get("alarm_sound_pattern") or "").lower()
+            and "no symptom" in (d.get("co_symptoms") or "").lower()
+        ) or any(
+            token in d.get("_text_blob", "")
+            for token in ("battery", "low battery", "replace batteries", "battery / power issue")
+        ),
+        "alarm_over_7_years": lambda d: "over 7" in (d.get("alarm_age") or "").lower() or "expired" in (d.get("alarm_age") or "").lower() or "end of life" in d.get("_text_blob", ""),
+        "alarm_out_of_date": lambda d: "over 7" in (d.get("alarm_age") or "").lower() or "expired" in (d.get("alarm_age") or "").lower() or "out of date" in d.get("_text_blob", "") or "end of life" in d.get("_text_blob", ""),
         "alarm_5_to_7_years": lambda d: "5-7" in (d.get("alarm_age") or ""),
-        "no_co_readings": lambda d: "no symptom" in (d.get("co_symptoms") or "").lower() and ("stopped" in (d.get("alarm_sound_pattern") or "").lower() or "chirp" in (d.get("alarm_sound_pattern") or "").lower()),
+        "no_co_readings": lambda d: (
+            "no symptom" in (d.get("co_symptoms") or "").lower()
+            and ("stopped" in (d.get("alarm_sound_pattern") or "").lower() or "chirp" in (d.get("alarm_sound_pattern") or "").lower())
+        ) or any(
+            token in d.get("_text_blob", "")
+            for token in ("no co readings", "no readings", "no co found", "no trace", "all checks clear")
+        ),
+        "co_readings_detected": lambda d: any(
+            token in d.get("_text_blob", "")
+            for token in ("co detected", "co reading", "ppm", "dangerous co", "rising co")
+        ) and not any(
+            token in d.get("_text_blob", "")
+            for token in ("no co", "no readings", "no trace", "no co found")
+        ),
         "is_safe_evacuated": lambda d: "outside" in (d.get("is_safe") or "").lower() or "fresh air" in (d.get("is_safe") or "").lower(),
         "not_evacuated": lambda d: "still inside" in (d.get("is_safe") or "").lower() or "still inside" in (d.get("is_evacuated") or "").lower(),
         "red_light_flashing": lambda d: "red" in (d.get("alarm_light_colour") or "").lower(),
         "no_light": lambda d: "no light" in (d.get("alarm_light_colour") or "").lower(),
         "co_alarm_type": lambda d: str(d.get("alarm_type", "")).lower().startswith("co"),
         "smoke_alarm_type": lambda d: "smoke" in str(d.get("alarm_type") or "").lower(),
+        "faulty_alarm": lambda d: any(
+            token in d.get("_text_blob", "")
+            for token in ("faulty alarm", "sensor fault", "device issue", "product issue", "alarm fault", "defective alarm")
+        ),
+        "tightness_test_passed": lambda d: any(
+            token in d.get("_text_blob", "")
+            for token in ("tightness test passed", "tt pass", "tt passed")
+        ),
+        "tt_passed": lambda d: any(
+            token in d.get("_text_blob", "")
+            for token in ("tightness test passed", "tt pass", "tt passed")
+        ),
+        "all_checks_clear": lambda d: any(
+            token in d.get("_text_blob", "")
+            for token in ("all checks clear", "appliances checked clear", "all clear")
+        ),
+        "no_gas_fault": lambda d: any(
+            token in d.get("_text_blob", "")
+            for token in ("no gas fault", "appliances checked clear", "no fault found", "no signs evident", "all checks clear")
+        ),
+        "portable_alarm_not_activated": lambda d: any(
+            token in d.get("_text_blob", "")
+            for token in ("portable alarm not activated", "portable co alarm did not", "second alarm not activated", "other alarm not active", "newer alarm not active")
+        ),
+        "other_alarm_not_active": lambda d: any(
+            token in d.get("_text_blob", "")
+            for token in ("portable alarm not activated", "second alarm not activated", "other alarm not active", "newer alarm not active")
+        ),
+        "hard_wired_alarm": lambda d: "hard wired" in d.get("_text_blob", "") or "hard-wired" in d.get("_text_blob", ""),
+        "all_alarms_activated": lambda d: any(
+            token in d.get("_text_blob", "")
+            for token in ("all alarms activated", "all went off", "same circuit")
+        ),
+        "electrical_fault_suspected": lambda d: any(
+            token in d.get("_text_blob", "")
+            for token in ("electrical fault", "shared fuse", "electrics checked")
+        ),
+        "paint_smell_present": lambda d: any(
+            token in d.get("_text_blob", "")
+            for token in ("paint smell", "paint fumes", "varnish", "voc", "cleaning chemical")
+        ),
+        "recent_decorating": lambda d: any(
+            token in d.get("_text_blob", "")
+            for token in ("decorating", "painted", "fresh paint", "varnish")
+        ),
+        "alarm_triggered_by_voc": lambda d: any(
+            token in d.get("_text_blob", "")
+            for token in ("voc", "paint fumes", "cleaning chemical")
+        ),
+        "charcoal_burning": lambda d: "charcoal" in d.get("_text_blob", ""),
+        "near_co_alarm": lambda d: "near co alarm" in d.get("_text_blob", "") or "near alarm" in d.get("_text_blob", ""),
+        "appliances_checked_clear": lambda d: any(
+            token in d.get("_text_blob", "")
+            for token in ("appliances checked clear", "all checks clear")
+        ),
+        "high_humidity": lambda d: "humidity" in d.get("_text_blob", ""),
+        "steam_present": lambda d: "steam" in d.get("_text_blob", ""),
+        "alarm_near_bathroom": lambda d: "bathroom" in d.get("_text_blob", ""),
+        "alarm_fell": lambda d: any(token in d.get("_text_blob", "") for token in ("fell from ceiling", "alarm fell", "dropped alarm")),
+        "impact_triggered": lambda d: any(token in d.get("_text_blob", "") for token in ("impact", "fell from ceiling", "dropped")),
+        "heat_alarm_activated": lambda d: "heat alarm" in d.get("_text_blob", "") or "heat element" in d.get("_text_blob", ""),
+        "combined_heat_co": lambda d: "combined heat" in d.get("_text_blob", "") or "heat/co" in d.get("_text_blob", ""),
         # Gas smell workflow fields
         "strong_mercaptan_odour": lambda d: "strong" in (d.get("smell_intensity") or "").lower() or "overwhelming" in (d.get("smell_intensity") or "").lower(),
         "health_symptoms_headache": lambda d: "headache" in (d.get("symptoms") or "").lower() or "feel unwell" in (d.get("symptoms") or "").lower(),
@@ -1412,10 +1539,86 @@ class KBService:
         "gas_escape": "gas_smell",
     }
 
+    _INDICATOR_ALIASES = {
+        "intermittent_beep": "intermittent_chirp",
+        "intermittent_beeping": "intermittent_chirp",
+        "tt_passed": "tightness_test_passed",
+        "second_alarm_not_activated": "other_alarm_not_active",
+        "portable_alarm_not_activated": "other_alarm_not_active",
+        "newer_alarm_not_active": "other_alarm_not_active",
+        "appliances_checked_clear": "all_checks_clear",
+        "alarm_5_years_expired": "alarm_out_of_date",
+        "alarm_over_7_years": "alarm_out_of_date",
+    }
+
+    _INDICATOR_WEIGHTS = {
+        "co_readings_detected": 1.7,
+        "no_co_readings": 1.7,
+        "no_gas_fault": 1.6,
+        "four_beep_pattern": 1.5,
+        "continuous_beeping": 1.4,
+        "strong_mercaptan_odour": 1.5,
+        "hissing_sound": 1.5,
+        "flue_blocked": 1.4,
+        "soot_visible": 1.4,
+        "red_light_flashing": 1.3,
+        "co_alarm_type": 0.8,
+        "symptoms_present": 1.1,
+        "multiple_symptoms": 1.2,
+        "not_evacuated": 1.1,
+        "is_safe_evacuated": 1.0,
+        "intermittent_chirp": 1.2,
+        "battery_low": 1.3,
+        "alarm_out_of_date": 1.2,
+        "alarm_over_7_years": 1.2,
+        "smoke_alarm_type": 1.2,
+    }
+
     def _normalize_use_case_key(self, use_case: str) -> str:
         raw = (use_case or "").lower().strip()
         aliased = self._USE_CASE_ALIASES.get(raw, raw)
         return aliased.replace("_", " ").strip()
+
+    def _indicator_weight(self, indicator_name: str) -> float:
+        """Return the weight for a KB indicator."""
+        return float(self._INDICATOR_WEIGHTS.get(self._canonicalize_indicator_name(indicator_name), 1.0))
+
+    def _canonicalize_indicator_name(self, indicator_name: str) -> str:
+        return self._INDICATOR_ALIASES.get(indicator_name, indicator_name)
+
+    def _canonicalize_indicator_map(self, indicators: Dict[str, Any]) -> Dict[str, Any]:
+        canonical: Dict[str, Any] = {}
+        for key, value in (indicators or {}).items():
+            canonical_key = self._canonicalize_indicator_name(key)
+            if canonical_key not in canonical:
+                canonical[canonical_key] = value
+                continue
+
+            existing = canonical[canonical_key]
+            if isinstance(existing, bool) and isinstance(value, bool):
+                canonical[canonical_key] = existing or value
+            elif existing in (None, "", False) and value not in (None, "", False):
+                canonical[canonical_key] = value
+        return canonical
+
+    def _specificity_factor(self, kb_indicators: Dict[str, Any]) -> float:
+        """Penalize sparse KB entries so generic 2-indicator entries don't max out."""
+        kb_indicators = self._canonicalize_indicator_map(kb_indicators)
+        if not kb_indicators:
+            return 1.0
+
+        total_weight = sum(self._indicator_weight(key) for key in kb_indicators)
+        indicator_count = len(kb_indicators)
+        count_factor = min(1.0, indicator_count / 4.0)
+        weight_factor = min(1.0, total_weight / 4.5)
+        return 0.55 + (0.45 * max(count_factor, weight_factor))
+
+    def _support_score(self, matches: List[Dict[str, Any]], top_n: int = 3) -> float:
+        """Average score of the strongest matches, used as a binary tie-breaker."""
+        if not matches:
+            return 0.0
+        top_matches = matches[:top_n]
+        return sum(match.get("score", 0.0) for match in top_matches) / len(top_matches)
 
     def _normalize_incident_data(self, incident_data: Dict[str, Any]) -> Dict[str, Any]:
         normalized = dict(incident_data or {})
@@ -1473,6 +1676,29 @@ class KBService:
         if not normalized.get("hissing_sound") and normalized.get("has_hissing"):
             normalized["hissing_sound"] = normalized.get("has_hissing")
 
+        text_parts = [
+            normalized.get("description"),
+            normalized.get("incident_type"),
+            normalized.get("location"),
+            normalized.get("alarm_type"),
+            normalized.get("alarm_sound_pattern"),
+            normalized.get("alarm_light_colour"),
+            normalized.get("co_symptoms"),
+            normalized.get("is_safe"),
+            normalized.get("co_alarm_status"),
+            normalized.get("manufacturer"),
+            normalized.get("model_number"),
+            normalized.get("manufacturer_triage_message"),
+            normalized.get("manufacturer_triage_outcome"),
+            normalized.get("last_subworkflow_message"),
+            normalized.get("last_subworkflow_outcome"),
+            normalized.get("resolution_summary"),
+            normalized.get("notes"),
+        ]
+        normalized["_text_blob"] = " | ".join(
+            str(part).lower() for part in text_parts if part not in (None, "")
+        )
+
         return normalized
 
     def _derive_kb_indicators(self, incident_data: Dict[str, Any]) -> Dict[str, bool]:
@@ -1483,7 +1709,7 @@ class KBService:
             try:
                 result = check_fn(incident_data)
                 if result:
-                    derived[indicator] = True
+                    derived[self._canonicalize_indicator_name(indicator)] = True
             except Exception:
                 pass
         return derived
@@ -1500,35 +1726,52 @@ class KBService:
         text-based description matching for external/backfilled incidents
         that lack structured indicators.
         """
-        kb_indicators = kb_entry.get("key_indicators", {})
+        kb_indicators = self._canonicalize_indicator_map(kb_entry.get("key_indicators", {}))
         incident_data = self._normalize_incident_data(incident_data)
 
         # Derive KB-style indicators from workflow structured data
         derived_indicators = self._derive_kb_indicators(incident_data)
         # Merge: original incident_data fields + derived boolean indicators
         merged_data = {**incident_data, **derived_indicators}
+        merged_data = {
+            **merged_data,
+            **{
+                self._canonicalize_indicator_name(key): value
+                for key, value in merged_data.items()
+            },
+        }
 
         # --- Indicator-based matching ---
-        matches = 0
-        present_and_checked = 0
+        matched_weight = 0.0
+        checked_weight = 0.0
+        contradicted_weight = 0.0
+        total_weight = sum(self._indicator_weight(key) for key in kb_indicators) if kb_indicators else 0.0
 
         if kb_indicators:
             for key, expected_value in kb_indicators.items():
                 actual_value = merged_data.get(key)
+                weight = self._indicator_weight(key)
 
                 if actual_value is None:
                     continue  # Skip indicators not present in incident data
 
-                present_and_checked += 1
+                checked_weight += weight
                 if self._values_match(actual_value, expected_value):
-                    matches += 1
+                    matched_weight += weight
+                else:
+                    contradicted_weight += weight
 
-        if present_and_checked > 0:
-            similarity = matches / present_and_checked
-            coverage = present_and_checked / len(kb_indicators)
-            if coverage < 0.4:
-                similarity *= coverage
-            return similarity
+        if checked_weight > 0 and total_weight > 0:
+            precision = matched_weight / checked_weight if checked_weight else 0.0
+            coverage = checked_weight / total_weight
+            contradiction_ratio = contradicted_weight / checked_weight if checked_weight else 0.0
+            specificity = self._specificity_factor(kb_indicators)
+
+            # Sparse/generic entries should not reach 1.0 too easily.
+            coverage_factor = 0.35 + (0.65 * coverage)
+            contradiction_factor = max(0.25, 1.0 - (0.7 * contradiction_ratio))
+            similarity = precision * coverage_factor * specificity * contradiction_factor
+            return max(0.0, min(1.0, similarity))
 
         # --- Text-based fallback for incidents without key_indicators ---
         incident_desc = (incident_data.get("description") or "").lower()

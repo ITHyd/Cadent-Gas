@@ -1879,10 +1879,10 @@ class AgentOrchestrator:
             kb_result = {
                 "true_kb_match": 0.0,
                 "false_kb_match": 0.0,
-                "best_match_type": "unknown",
+                "best_match_type": "false",
                 "best_match_id": None,
                 "confidence_adjustment": 0.0,
-                "explanation": "KB verification unavailable",
+                "explanation": "KB verification unavailable; defaulting to false incident classification",
             }
 
         property_type = structured_data.get("property_type", "residential")
@@ -1903,7 +1903,7 @@ class AgentOrchestrator:
         payload = {
             "mode": "kb_and_risk",
             "status": "active",
-            "kb_verdict": kb_match_type or "unknown",
+            "kb_verdict": kb_match_type or "false",
             "true_kb_score": round(kb_result.get("true_kb_match", 0.0), 3) if kb_result else 0.0,
             "false_kb_score": round(kb_result.get("false_kb_match", 0.0), 3) if kb_result else 0.0,
             "confidence": round(kb_result.get("confidence", 0.0), 3) if kb_result else 0.0,
