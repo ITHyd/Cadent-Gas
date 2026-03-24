@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useRef } from 'react';
 
 const VideoRecorder = ({ onRecordingComplete, isRecording, setIsRecording, disabled = false }) => {
   const mediaRecorderRef = useRef(null);

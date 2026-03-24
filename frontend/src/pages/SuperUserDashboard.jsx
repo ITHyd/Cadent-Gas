@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   getKBStats,
   getTenants,
@@ -65,7 +65,7 @@ const trendDelta = (current, previous) => {
 
 const SuperUserDashboard = () => {
   const [tenants, setTenants] = useState([]);
-  const [kbStats, setKbStats] = useState({ total_true: 0, total_false: 0 });
+  const [, setKbStats] = useState({ total_true: 0, total_false: 0 });
   const [trueKbEntries, setTrueKbEntries] = useState([]);
   const [falseKbEntries, setFalseKbEntries] = useState([]);
   const [tenantKbStats, setTenantKbStats] = useState({});

@@ -1,5 +1,17 @@
 export const API_BASE_URL = import.meta.env.VITE_API_URL || '';
 
+const readErrorMessage = async (response, fallbackMessage) => {
+  const contentType = response.headers.get('content-type') || '';
+
+  if (contentType.includes('application/json')) {
+    const error = await response.json().catch(() => ({}));
+    return error.detail || error.message || fallbackMessage;
+  }
+
+  const text = await response.text().catch(() => '');
+  return text || fallbackMessage;
+};
+
 // ── Auth helpers ──────────────────────────────────────────────────────────
 
 const getAuthHeaders = () => {
@@ -123,8 +135,7 @@ export const sendOTP = async (phone) => {
     body: JSON.stringify({ phone }),
   });
   if (!response.ok) {
-    const error = await response.json();
-    throw new Error(error.detail || 'Failed to send OTP');
+    throw new Error(await readErrorMessage(response, 'Failed to send OTP'));
   }
   return response.json();
 };
@@ -136,8 +147,7 @@ export const verifyOTP = async (phone, otp) => {
     body: JSON.stringify({ phone, otp }),
   });
   if (!response.ok) {
-    const error = await response.json();
-    throw new Error(error.detail || 'Invalid OTP');
+    throw new Error(await readErrorMessage(response, 'Invalid OTP'));
   }
   return response.json();
 };
@@ -149,8 +159,7 @@ export const adminLogin = async (username, password) => {
     body: JSON.stringify({ username, password }),
   });
   if (!response.ok) {
-    const error = await response.json();
-    throw new Error(error.detail || 'Login failed');
+    throw new Error(await readErrorMessage(response, 'Login failed'));
   }
   return response.json();
 };

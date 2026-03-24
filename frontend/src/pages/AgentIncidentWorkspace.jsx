@@ -274,6 +274,7 @@ const AgentIncidentWorkspace = () => {
               : current
           ));
         } catch {
+          return;
         }
       },
       () => {

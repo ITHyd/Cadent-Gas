@@ -85,7 +85,7 @@ export const AuthProvider = ({ children }) => {
       }
     };
     validate();
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
     const handleAuthExpired = () => {

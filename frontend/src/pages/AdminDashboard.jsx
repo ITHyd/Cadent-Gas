@@ -12,7 +12,6 @@ import {
   getCompanyOpsRequests,
   getCompanyStats,
   getIncident,
-  getKBStats,
   getFalseIncidentsKB,
   getTenantWorkflows,
   getTrueIncidentsKB,
@@ -45,8 +44,6 @@ const FILTER_TO_STATUS = {
   completed: 'completed',
   all: null,
 };
-
-const PRIORITY_ORDER = { CRITICAL: 0, HIGH: 1, MEDIUM: 2, NORMAL: 3, LOW: 4 };
 
 const paginationBtnStyle = {
   border: '1px solid #cbd5e1',
@@ -103,7 +100,6 @@ const AdminDashboard = () => {
   const [incidents, setIncidents] = useState([]);
   const [allIncidents, setAllIncidents] = useState([]);
   const [stats, setStats] = useState(null);
-  const [kbStats, setKbStats] = useState(null);
   const [kbTrueEntries, setKbTrueEntries] = useState([]);
   const [kbFalseEntries, setKbFalseEntries] = useState([]);
   const [tenantWorkflows, setTenantWorkflows] = useState([]);
@@ -183,7 +179,6 @@ const AdminDashboard = () => {
         allAgentsData,
         opsData,
         workflowData,
-        kbData,
         trueKbData,
         falseKbData,
       ] = await Promise.all([
@@ -194,7 +189,6 @@ const AdminDashboard = () => {
         getAllAgents().catch(() => ({ agents: [] })),
         getCompanyOpsRequests(tenantId).catch(() => ({ assistance_requests: [], item_requests: [] })),
         getTenantWorkflows(tenantId).catch(() => []),
-        getKBStats(tenantId).catch(() => null),
         getTrueIncidentsKB(1, 500, tenantId).catch(() => ({ items: [] })),
         getFalseIncidentsKB(1, 500, tenantId).catch(() => ({ items: [] })),
       ]);
@@ -202,7 +196,6 @@ const AdminDashboard = () => {
       setIncidents(incidentsData.incidents || []);
       setAllIncidents(allIncidentsData.incidents || []);
       setStats(statsData || null);
-      setKbStats(kbData || { total_true: 0, total_false: 0 });
       setKbTrueEntries(trueKbData.items || []);
       setKbFalseEntries(falseKbData.items || []);
       setTenantWorkflows(Array.isArray(workflowData) ? workflowData : workflowData?.workflows || []);
@@ -561,8 +554,6 @@ const AdminDashboard = () => {
     const previousIncidents = allIncidents.filter((incident) => isWithinRange(incident.created_at, previousRange.start, previousRange.end));
     const filteredTrueKb = kbTrueEntries.filter((entry) => isWithinRange(entry.created_at, range.start, range.end));
     const filteredFalseKb = kbFalseEntries.filter((entry) => isWithinRange(entry.created_at, range.start, range.end));
-    const previousTrueKb = kbTrueEntries.filter((entry) => isWithinRange(entry.created_at, previousRange.start, previousRange.end));
-    const previousFalseKb = kbFalseEntries.filter((entry) => isWithinRange(entry.created_at, previousRange.start, previousRange.end));
     const filteredWorkflows = tenantWorkflows.filter((workflow) => {
       if (!workflow.created_at) return true;
       return isWithinRange(workflow.created_at, range.start, range.end);
@@ -714,35 +705,6 @@ const AdminDashboard = () => {
       ],
     };
   }, [allIncidents, kbFalseEntries, kbTrueEntries, tenantWorkflows, dateRange, customEndDate, customStartDate, totalOpsCount, breachedCount]);
-
-  const renderMetricRows = (items, emptyLabel = 'No data available yet.') => {
-    const total = items.reduce((sum, item) => sum + (item.value || 0), 0);
-
-    if (total === 0) {
-      return <div style={{ color: '#8ea3b9', fontSize: '0.84rem' }}>{emptyLabel}</div>;
-    }
-
-    return (
-      <div style={{ display: 'grid', gap: '10px' }}>
-        {items.map((item) => {
-          const width = getPercent(item.value || 0, total);
-          return (
-            <div key={item.label}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: '10px', marginBottom: '4px' }}>
-                <div style={{ color: '#0f172a', fontSize: '0.83rem', fontWeight: 700 }}>{item.label}</div>
-                <div style={{ color: '#475569', fontSize: '0.78rem', fontWeight: 700 }}>
-                  {item.value} ({width}%)
-                </div>
-              </div>
-              <div style={{ height: '8px', borderRadius: '999px', background: '#dbe5ef', overflow: 'hidden' }}>
-                <div style={{ width: `${Math.max(item.value > 0 ? 6 : 0, width)}%`, height: '100%', borderRadius: '999px', background: item.color }} />
-              </div>
-            </div>
-          );
-        })}
-      </div>
-    );
-  };
 
   const getSlaColor = (slaStatus) => {
     if (slaStatus === 'breached') return '#b91c1c';
@@ -1740,7 +1702,7 @@ const AdminDashboard = () => {
           <div className="modal-card" onClick={(event) => event.stopPropagation()} style={{ width: 'min(560px, 100%)' }}>
             <h3 style={{ marginBottom: '6px' }}>Review & Approve Resolution</h3>
             <p style={{ margin: '0 0 12px', fontSize: '0.86rem', color: '#4d6178' }}>
-              Review the agent's resolution and approve to mark incident as completed.
+              Review the agent&apos;s resolution and approve to mark incident as completed.
             </p>
 
             {approvingIncident && (
@@ -1894,7 +1856,7 @@ const AdminDashboard = () => {
           <div className="modal-card" onClick={(event) => event.stopPropagation()}>
             <h3 style={{ marginBottom: '6px' }}>Send Customer Notification</h3>
             <p style={{ fontSize: '0.86rem', margin: '0 0 8px', color: '#5f738a' }}>
-              This message will appear in the customer's incident detail page.
+              This message will appear in the customer&apos;s incident detail page.
             </p>
 
             <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', marginBottom: '10px' }}>
@@ -1997,7 +1959,6 @@ const AdminDashboard = () => {
           const inc = detailIncident;
           const sd = inc.structured_data || {};
           const kbVal = sd._kb_validation || inc.kb_validation_details || null;
-          const riskAssess = sd._risk_assessment || null;
           const statusMeta = getStatusMeta(inc.status);
           const riskMeta = getRiskMeta(inc.risk_score ?? 0);
           const assignedAgent = inc.assigned_agent_id
@@ -2238,7 +2199,7 @@ const AdminDashboard = () => {
                                 All Matched KB Entries ({kbVal.all_matches.length})
                               </div>
                               <div style={{ display: 'grid', gap: '6px' }}>
-                                {kbVal.all_matches.map((match, idx) => {
+                                {kbVal.all_matches.map((match) => {
                                   const isExpanded = expandedKbEntry === match.kb_id;
                                   const isTrue = match.kb_type === 'true';
                                   const isBest = match.kb_id === kbVal.matched_kb_id;

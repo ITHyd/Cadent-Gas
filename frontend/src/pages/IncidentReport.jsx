@@ -397,7 +397,7 @@ const IncidentReport = () => {
               <div>
                 <div style={{ fontWeight: 700, fontSize: '0.88rem', color: '#334155' }}>No Knowledge Base Match</div>
                 <div style={{ fontSize: '0.8rem', color: '#64748b' }}>
-                  This incident doesn't closely match any known records. Our team will review it as a new case.
+                  This incident doesn&apos;t closely match any known records. Our team will review it as a new case.
                 </div>
               </div>
             </div>

@@ -30,4 +30,4 @@ if errorlevel 1 (
 echo.
 echo Starting FastAPI server...
 cd /d "%BACKEND_DIR%"
-"%VENV_PYTHON%" -m uvicorn main:app --reload --host 0.0.0.0 --port 5020
+"%VENV_PYTHON%" -m uvicorn main:app --reload --host 0.0.0.0 --port 8000

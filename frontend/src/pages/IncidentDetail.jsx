@@ -6,7 +6,6 @@ import 'leaflet/dist/leaflet.css';
 import { formatUseCase } from '../utils/formatters';
 import { formatIncidentId, formatReferenceId } from '../utils/incidentIds';
 import { getIncident, addUserNote, updateUserNote, deleteUserNote, updateSmsPreference } from '../services/api';
-import { useAuth } from '../contexts/AuthContext';
 
 /* ═══════════════════════════════════════════════════════════════════
    DESIGN TOKENS
@@ -184,7 +183,6 @@ const SkeletonPage = () => (
 const IncidentDetail = () => {
   const { incidentId } = useParams();
   const navigate = useNavigate();
-  const { user } = useAuth();
   const [incident, setIncident] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -276,8 +274,6 @@ const IncidentDetail = () => {
     emergency_dispatch: 'Emergency Dispatch', schedule_engineer: 'Engineer Scheduled',
     monitor: 'Monitoring', close_with_guidance: 'Closed with Guidance', false_report: 'No Action Required',
   };
-  const outcomeIcons = { emergency_dispatch: '🚨', schedule_engineer: '🔧', monitor: '👁️', close_with_guidance: '✓', false_report: '❌' };
-
   const getStatusColor = (s) => statusColors[s] || '#6b7280';
   const getStatusLabel = (s) => statusLabels[s] || s;
   const getOutcomeLabel = (o) => outcomeLabels[o] || o?.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()) || '';
@@ -801,7 +797,7 @@ const IncidentDetail = () => {
                   <div style={{ padding: '32px', textAlign: 'center' }}>
                     <div style={{ fontSize: '2.5rem', marginBottom: '12px' }}>🔍</div>
                     <div style={{ fontSize: '1.15rem', fontWeight: '700', color: T.text, marginBottom: '6px' }}>Finding an Engineer</div>
-                    <p style={{ fontSize: '0.9rem', color: T.textMuted, margin: '0 0 16px', lineHeight: 1.6 }}>We're matching you with the best available engineer nearby.</p>
+                    <p style={{ fontSize: '0.9rem', color: T.textMuted, margin: '0 0 16px', lineHeight: 1.6 }}>We&apos;re matching you with the best available engineer nearby.</p>
                     <div style={{
                       display: 'inline-flex', alignItems: 'center', gap: '6px',
                       padding: '4px 12px', background: '#edf5fc', borderRadius: T.radiusPill,

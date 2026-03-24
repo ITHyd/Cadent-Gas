@@ -43,11 +43,13 @@ const TenantManagement = () => {
             connMap[t.tenant_id] = cData.connectors || [];
           } catch {
             connMap[t.tenant_id] = [];
+            return;
           }
         })
       );
       setTenantConnectors(connMap);
     } catch {
+      return;
     } finally {
       setLoading(false);
     }
@@ -64,6 +66,7 @@ const TenantManagement = () => {
       await loadTenants();
     } catch {
       setConfirmDelete(null);
+      return;
     }
   };
 
@@ -85,6 +88,7 @@ const TenantManagement = () => {
       setTenantDetail({ ...data, connectors: cData.connectors || [] });
       setAdminGroups(gData.admin_groups || []);
     } catch {
+      return;
     } finally {
       setDetailLoading(false);
     }
@@ -747,7 +751,9 @@ const TenantManagement = () => {
                                                   try {
                                                     await deleteAdminGroup(t.tenant_id, g.group_id);
                                                     setAdminGroups((prev) => prev.filter((grp) => grp.group_id !== g.group_id));
-                                                  } catch { }
+                                                  } catch {
+                                                    return;
+                                                  }
                                                   finally { setGroupBusy(''); }
                                                 }}
                                               >Delete</button>
@@ -801,7 +807,9 @@ const TenantManagement = () => {
                                                       await updateAdminGroup(t.tenant_id, g.group_id, newGroup);
                                                       setAdminGroups((prev) => prev.map((grp) => grp.group_id === g.group_id ? { ...grp, ...newGroup } : grp));
                                                       setEditingGroup(null);
-                                                    } catch { }
+                                                    } catch {
+                                                      return;
+                                                    }
                                                     finally { setGroupBusy(''); }
                                                   }}
                                                 >Save</button>
@@ -859,7 +867,9 @@ const TenantManagement = () => {
                                                 setAdminGroups((prev) => [...prev, result.group]);
                                                 setShowGroupForm(false);
                                                 setNewGroup({ display_name: '', connector_scope: [], description: '' });
-                                              } catch { }
+                                              } catch {
+                                                return;
+                                              }
                                               finally { setGroupBusy(''); }
                                             }}
                                           >Create</button>
@@ -899,7 +909,9 @@ const TenantManagement = () => {
                                                         usr.user_id === u.user_id ? { ...usr, admin_group_id: groupId } : usr
                                                       ),
                                                     }));
-                                                  } catch { }
+                                                  } catch {
+                                                    return;
+                                                  }
                                                   finally { setAssignBusy(''); }
                                                 }}
                                                 options={[

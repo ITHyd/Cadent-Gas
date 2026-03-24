@@ -32,22 +32,6 @@ const ProfileDropdown = () => {
     navigate('/login');
   };
 
-  const getRoleLabel = (role) => ({
-    user: 'User',
-    agent: 'Field Agent',
-    company: 'Company Admin',
-    super_user: 'Super User',
-    admin: 'Administrator',
-  }[role] || role);
-
-  const getRoleColor = (role) => ({
-    user: '#3b82f6',
-    agent: '#8b5cf6',
-    company: '#f59e0b',
-    super_user: '#ef4444',
-    admin: '#ef4444',
-  }[role] || '#6b7280');
-
   return (
     <div ref={containerRef} style={styles.container}>
       {/* Avatar button */}

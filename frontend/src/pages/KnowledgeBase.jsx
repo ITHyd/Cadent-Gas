@@ -1,10 +1,9 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { formatUseCase } from '../utils/formatters';
 import {
   getKBStats,
   getTrueIncidentsKB,
   getFalseIncidentsKB,
-  getRecentKBEntries,
   addKBEntry,
   updateKBEntry,
   deleteKBEntry,
@@ -50,6 +49,7 @@ const KnowledgeBase = () => {
       const data = await getKBStats(tenantId);
       setStats(data);
     } catch {
+      return;
     }
   };
 
@@ -64,6 +64,7 @@ const KnowledgeBase = () => {
         setFalseIncidents(data);
       }
     } catch {
+      return;
     } finally {
       setLoading(false);
     }
@@ -80,6 +81,7 @@ const KnowledgeBase = () => {
         setFalseIncidents({ items: data.results, total: data.total, page: 1, pages: 1 });
       }
     } catch {
+      return;
     } finally {
       setLoading(false);
     }
@@ -92,6 +94,7 @@ const KnowledgeBase = () => {
       loadKBData();
       loadStats();
     } catch {
+      return;
     }
   };
 
@@ -561,6 +564,7 @@ const AddKBModal = ({ kbType, onClose, onSuccess }) => {
       await addKBEntry(kbType, entry, 'admin_user');
       onSuccess();
     } catch {
+      return;
     }
   };
 
@@ -615,6 +619,7 @@ const EditKBModal = ({ entry, kbType, onClose, onSuccess }) => {
       await updateKBEntry(kbType, entry.kb_id, updates);
       onSuccess();
     } catch {
+      return;
     }
   };
 

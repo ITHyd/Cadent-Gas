@@ -61,7 +61,7 @@ const FloatingChatWidget = forwardRef(function FloatingChatWidget(
   const [isConnected, setIsConnected] = useState(false);
   const [incidentStarted, setIncidentStarted] = useState(false);
   const [isTyping, setIsTyping] = useState(false);
-  const [isProcessing, setIsProcessing] = useState(false);
+  const [isProcessing] = useState(false);
   const [availableWorkflows, setAvailableWorkflows] = useState([]);
   const [workflowStarted, setWorkflowStarted] = useState(false);
   const [chatOpen, setChatOpen] = useState(false);
@@ -971,7 +971,7 @@ const FloatingChatWidget = forwardRef(function FloatingChatWidget(
               </div>
             ) : (
               <>
-                {messages.map((message, index) => (
+                {messages.map((message) => (
                   <React.Fragment key={message.id}>
                     <ChatMessage
                       message={message}

@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from 'react';
 
-const LiveVoiceChat = ({ sessionId, onTranscript, onAudioReady, onAudioResponse, isConnected, transcribeMode = false, onStop }) => {
+const LiveVoiceChat = ({ onTranscript, onAudioReady, onAudioResponse, transcribeMode = false, onStop }) => {
   const [isListening, setIsListening] = useState(false);
   const [isPaused, setIsPaused] = useState(false);
   const [isSpeaking, setIsSpeaking] = useState(false);
@@ -13,11 +13,9 @@ const LiveVoiceChat = ({ sessionId, onTranscript, onAudioReady, onAudioResponse,
   const analyserRef = useRef(null);
   const audioChunksRef = useRef([]);
   const silenceTimerRef = useRef(null);
-  const audioQueueRef = useRef([]);
   const currentAudioRef = useRef(null);
 
   const SILENCE_THRESHOLD = 1500; // ms of silence before sending
-  const MIN_RECORDING_TIME = 500; // minimum recording duration
 
   const styles = {
     container: {
@@ -315,7 +313,7 @@ const LiveVoiceChat = ({ sessionId, onTranscript, onAudioReady, onAudioResponse,
     }
   };
 
-  const playTextWithBrowserTTS = (text, voice = 'default', speed = 1.0) => {
+  const playTextWithBrowserTTS = (text, speed = 1.0) => {
     if ('speechSynthesis' in window) {
       // Stop any ongoing speech
       window.speechSynthesis.cancel();

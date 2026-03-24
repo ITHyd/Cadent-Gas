@@ -795,9 +795,9 @@ const NodePropertiesForm = ({ node, onChange, onDelete, allNodes = [] }) => {
           <br />
           <br />
           <strong>Examples:</strong>
-          <br />&#x2022; smell_intensity == 'strong'
-          <br />&#x2022; has_symptoms == 'yes'
-          <br />&#x2022; smell_intensity in ['strong', 'overwhelming']
+          <br />&#x2022; smell_intensity == &apos;strong&apos;
+          <br />&#x2022; has_symptoms == &apos;yes&apos;
+          <br />&#x2022; smell_intensity in [&apos;strong&apos;, &apos;overwhelming&apos;]
         </div>
       </div>
     </>

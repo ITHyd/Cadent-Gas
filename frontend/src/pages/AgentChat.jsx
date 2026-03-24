@@ -72,7 +72,9 @@ const AgentChat = () => {
           try {
             const response = JSON.parse(event.data);
             handleAgentMessage(response);
-          } catch {}
+          } catch {
+            setIsTyping(false);
+          }
         };
 
         ws.onerror = () => {};
@@ -192,6 +194,7 @@ const AgentChat = () => {
     }
 
     if (response.type === "error") {
+      setIsTyping(false);
     }
   };
 

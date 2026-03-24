@@ -34,6 +34,7 @@ const AudioRecorder = ({ onRecordingComplete, isRecording, setIsRecording, disab
       mediaRecorder.start();
       setIsRecording(true);
     } catch {
+      setIsRecording(false);
     }
   };
 

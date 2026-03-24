@@ -890,7 +890,6 @@ const WorkflowBuilderVisual = ({ workflow, tenantId, onClose }) => {
     const startNode = layoutedNodes.find((n) => n.id === startId) || layoutedNodes[0];
     if (!startNode) return;
     const wrapper = reactFlowWrapper.current;
-    const wW = wrapper?.offsetWidth || 900;
     const wH = wrapper?.offsetHeight || 600;
     const zoom = 1;
     const x = -startNode.position.x * zoom + 60;
@@ -954,7 +953,7 @@ const WorkflowBuilderVisual = ({ workflow, tenantId, onClose }) => {
     setNodes(layouted);
     setEdges(visEdges);
     // No zoomToStart here — keep viewport where user is looking
-  }, [collapsedGroups]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [collapsedGroups]);
 
   const [selectedNode, setSelectedNode] = useState(null);
   const [isSaving, setIsSaving] = useState(false);
