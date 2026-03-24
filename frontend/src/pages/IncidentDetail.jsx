@@ -4,6 +4,7 @@ import { MapContainer, TileLayer, Marker, Popup, Polyline, useMap } from 'react-
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { formatUseCase } from '../utils/formatters';
+import { formatIncidentId, formatReferenceId } from '../utils/incidentIds';
 import { getIncident, addUserNote, updateUserNote, deleteUserNote, updateSmsPreference } from '../services/api';
 import { useAuth } from '../contexts/AuthContext';
 
@@ -419,8 +420,8 @@ const IncidentDetail = () => {
     lines.push('-'.repeat(60));
     lines.push('  INCIDENT REPORT');
     lines.push('-'.repeat(60));
-    lines.push(`  Reference: REF-${shortRef}`);
-    lines.push(`  Incident ID: ${incident.incident_id}`);
+    lines.push(`  Reference: ${shortRef}`);
+    lines.push(`  Incident ID: ${formatIncidentId(incident.incident_id)}`);
     lines.push(`  Generated: ${new Date().toLocaleString('en-GB')}`);
 
     addSection('Incident Overview');
@@ -528,7 +529,7 @@ const IncidentDetail = () => {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `Incident-Report-REF-${shortRef}-${new Date().toISOString().slice(0, 10)}.txt`;
+    a.download = `Incident-Report-${shortRef}-${new Date().toISOString().slice(0, 10)}.txt`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
@@ -545,7 +546,7 @@ const IncidentDetail = () => {
           <div style={{ fontSize: '3.5rem', marginBottom: '16px' }}>⚠️</div>
           <div style={{ fontSize: '1.25rem', fontWeight: '700', color: T.text, marginBottom: '8px' }}>{error || 'Incident not found'}</div>
           <p style={{ fontSize: '1rem', color: T.textMuted, marginBottom: '24px', lineHeight: 1.5 }}>Please try again or go back to your reports.</p>
-          <button onClick={() => navigate('/my-reports')} style={{
+          <button onClick={() => navigate('/my-reports', { replace: true })} style={{
             padding: '10px 24px', background: T.primary, color: 'white', border: 'none',
             borderRadius: T.radiusSm, cursor: 'pointer', fontSize: '0.95rem', fontWeight: '600',
           }}>Back to My Reports</button>
@@ -561,7 +562,7 @@ const IncidentDetail = () => {
   const sla = incident.sla || {};
   const active = isActive(incident.status);
   const incidentType = formatUseCase(incident.incident_type || incident.classified_use_case || 'Incident');
-  const shortRef = incident.incident_id ? incident.incident_id.replace(/^INC_/i, '').toUpperCase() : '';
+  const shortRef = formatReferenceId(incident.incident_id);
   const agent = incident.assigned_agent;
   const statusHistory = incident.status_history || [];
   const statusColor = getStatusColor(incident.status);
@@ -584,7 +585,7 @@ const IncidentDetail = () => {
       }}>
         <div style={{ maxWidth: '1280px', margin: '0 auto', padding: '0 24px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap', minWidth: 0 }}>
-            <button onClick={() => navigate('/my-reports')} style={{
+            <button onClick={() => navigate('/my-reports', { replace: true })} style={{
               background: 'none', border: 'none', cursor: 'pointer', fontSize: '0.95rem',
               color: T.primary, fontWeight: '600', display: 'flex', alignItems: 'center', gap: '4px', padding: '6px 0',
             }}>← My Reports</button>
@@ -593,7 +594,7 @@ const IncidentDetail = () => {
               fontFamily: 'monospace', fontSize: '0.9rem', color: T.primary,
               background: T.primaryLight, padding: '4px 10px', borderRadius: '6px', fontWeight: '600',
               whiteSpace: 'nowrap', overflow: 'visible', flexShrink: 0,
-            }}>REF-{shortRef}</span>
+            }}>{shortRef}</span>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
             {/* Live indicator */}
@@ -1167,7 +1168,7 @@ const IncidentDetail = () => {
               </div>
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0' }}>
                 {[
-                  { label: 'Reference', value: `REF-${shortRef}`, mono: true, fullWidth: false },
+                  { label: 'Reference', value: shortRef, mono: true, fullWidth: false },
                   { label: 'Type', value: incidentType },
                   { label: 'Status', value: getStatusLabel(incident.status) },
                   { label: 'Outcome', value: getOutcomeLabel(incident.outcome) || 'Pending' },

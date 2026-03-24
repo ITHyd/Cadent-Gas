@@ -97,6 +97,7 @@ class Incident(BaseModel):
     user_name: Optional[str] = None
     user_phone: Optional[str] = None
     user_address: Optional[str] = None
+    reference_id: Optional[str] = None
     reported_by_staff_id: Optional[str] = None  # Admin who reported on behalf of customer
 
     # Incident details

@@ -174,3 +174,12 @@ Book1.xlsx
 *.scss.map
 WORKFLOW_CHATBOT_INTEGRATION.md
 SEED_ACCOUNTS.md
+
+# Allow checked-in CRM ID migration artifacts
+!docs/
+docs/*
+!docs/crm-id-migration-notes.md
+!docs/templates/
+docs/templates/*
+!docs/templates/crm_id_customer_lookup_template.csv
+!docs/templates/crm_id_customer_lookup_template.xlsx

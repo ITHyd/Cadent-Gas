@@ -10,6 +10,7 @@ from typing import Any, Dict, List, Optional
 from app.models.incident import IncidentMedia, IncidentOutcome, IncidentStatus, MediaType
 from app.models.session_mode import SessionMode
 from app.models.workflow import Workflow
+from app.constants.reference_ids import normalize_demo_reference_id
 from app.services.classifier import IncidentClassifier
 from app.services.incident_service import IncidentService
 from app.services.intent_detector import detect_intent
@@ -61,6 +62,13 @@ class AgentOrchestrator:
         _ = workflow  # Kept for compatibility with existing API callers.
 
         session_id = str(uuid.uuid4())
+        reference_id = normalize_demo_reference_id(
+            initial_data.get("reference_id")
+        )
+        structured_data = {}
+        if reference_id:
+            structured_data["reference_id"] = reference_id
+
         self.active_sessions[session_id] = {
             "session_id": session_id,
             "incident_id": incident_id,
@@ -79,8 +87,11 @@ class AgentOrchestrator:
             "mode": SessionMode.IDLE,
             "paused_workflows": [],       # list of snapshot dicts
             "pending_switch": None,        # {use_case, confidence, detail}
+            "pending_reference_match": None,
             "last_question_data": None,    # last question+options for reprompt
             "validation_notice_sent": False,
+            "reference_id": reference_id,
+            "awaiting_reference_id": not bool(reference_id),
             # Stability controls
             "switch_count": 0,
             "switch_timestamps": [],       # list of time.time() floats
@@ -89,7 +100,7 @@ class AgentOrchestrator:
             "mode_history": [],            # [{from, to, reason, timestamp}]
             # History
             "conversation_history": [],
-            "structured_data": {},
+            "structured_data": structured_data,
             "created_at": datetime.utcnow(),
         }
 
@@ -119,14 +130,41 @@ class AgentOrchestrator:
                 },
             }
 
-        message = "Please describe your gas incident so I can start the workflow."
-        self._add_to_history(session_id, "agent", {"message": message, "action": "awaiting_incident_report"})
+        if reference_id:
+            existing_incident = self.incident_service.get_incident_by_reference_id(
+                reference_id,
+                tenant_id=tenant_id,
+                exclude_incident_id=incident_id,
+            )
+            if existing_incident:
+                return self._build_reference_exists_response(
+                    session_id,
+                    reference_id,
+                    existing_incident.incident_id,
+                )
+
+            message = "Reference ID recorded. Please describe your gas incident so I can start the workflow."
+            action = "awaiting_incident_report"
+            data = {"reference_id": reference_id}
+        else:
+            message = "Please enter the REF ID before we begin."
+            action = "reference_id_prompt"
+            data = {
+                "refIdPrompt": True,
+                "reference_id_prompt": True,
+            }
+
+        self._add_to_history(
+            session_id,
+            "agent",
+            {"message": message, "action": action, "data": data},
+        )
 
         return {
             "session_id": session_id,
             "message": message,
-            "action": "awaiting_incident_report",
-            "data": {},
+            "action": action,
+            "data": data,
         }
 
     # ╔══════════════════════════════════════════════════════════════════════╗
@@ -219,6 +257,16 @@ class AgentOrchestrator:
         )
 
         # ── Classify every incoming message for intent detection ─────────
+        reference_capture_response = await self._maybe_capture_reference_id(
+            session_id=session_id,
+            user_message=user_message,
+        )
+        if reference_capture_response is not None:
+            transcript = session.pop("_last_transcript", None)
+            if transcript:
+                reference_capture_response["user_transcript"] = transcript
+            return reference_capture_response
+
         classification = await self.classifier.classify(user_message)
         session["last_classification"] = classification
         logger.info(f"Message classification: {classification}")
@@ -702,6 +750,223 @@ class AgentOrchestrator:
     # ╔══════════════════════════════════════════════════════════════════════╗
     # ║  WORKFLOW OPERATIONS                                                ║
     # ╚══════════════════════════════════════════════════════════════════════╝
+
+    def _build_reference_exists_response(
+        self,
+        session_id: str,
+        reference_id: str,
+        existing_incident_id: str,
+    ) -> Dict[str, Any]:
+        session = self.active_sessions[session_id]
+        session["pending_reference_match"] = {
+            "reference_id": reference_id,
+            "incident_id": existing_incident_id,
+        }
+
+        message = (
+            f"Existing incident found for Reference ID {reference_id}.\n"
+            f"Incident ID: {existing_incident_id}\n\n"
+            "Would you like to open the existing incident or re-enter another REF ID?"
+        )
+        data = {
+            "reference_id_exists": True,
+            "reference_id": reference_id,
+            "incident_id": existing_incident_id,
+            "redirect": f"/my-reports/{existing_incident_id}",
+            "options": ["Open Existing Incident", "Re-enter REF ID"],
+        }
+        self._add_to_history(
+            session_id,
+            "agent",
+            {"message": message, "action": "reference_id_exists", "data": data},
+        )
+        return {
+            "session_id": session_id,
+            "message": message,
+            "action": "reference_id_exists",
+            "data": data,
+            "completed": False,
+        }
+
+    def _prompt_for_reference_id(
+        self,
+        session_id: str,
+        message: str = "Please enter the REF ID before we begin.",
+    ) -> Dict[str, Any]:
+        session = self.active_sessions[session_id]
+        session["awaiting_reference_id"] = True
+        session["pending_reference_match"] = None
+        session["reference_id"] = None
+        session.setdefault("initial_data", {}).pop("reference_id", None)
+        session.get("structured_data", {}).pop("reference_id", None)
+
+        data = {
+            "refIdPrompt": True,
+            "reference_id_prompt": True,
+        }
+        self._add_to_history(
+            session_id,
+            "agent",
+            {"message": message, "action": "reference_id_prompt", "data": data},
+        )
+        return {
+            "session_id": session_id,
+            "message": message,
+            "action": "reference_id_prompt",
+            "data": data,
+            "completed": False,
+        }
+
+    def _handle_reference_match_choice(
+        self,
+        session_id: str,
+        user_message: str,
+    ) -> Dict[str, Any]:
+        session = self.active_sessions[session_id]
+        pending = session.get("pending_reference_match") or {}
+        lower = user_message.strip().lower()
+
+        wants_open = "open" in lower or "existing" in lower or "use" in lower
+        wants_reenter = "re-enter" in lower or "reenter" in lower or "another" in lower
+
+        if wants_open and pending.get("incident_id"):
+            incident_id = pending["incident_id"]
+            reference_id = pending["reference_id"]
+            current_incident_id = session.get("incident_id")
+            current_incident = (
+                self.incident_service.get_incident(current_incident_id)
+                if current_incident_id
+                else None
+            )
+            if (
+                current_incident
+                and current_incident.incident_id != incident_id
+                and not current_incident.reference_id
+            ):
+                self.incident_service.delete_incident(current_incident.incident_id)
+
+            session["pending_reference_match"] = None
+            session["completed"] = True
+            message = (
+                f"Opening existing incident {incident_id} for Reference ID {reference_id}."
+            )
+            data = {
+                "incident_id": incident_id,
+                "reference_id": reference_id,
+                "redirect": f"/my-reports/{incident_id}",
+            }
+            self._add_to_history(
+                session_id,
+                "agent",
+                {"message": message, "action": "open_existing_incident", "data": data},
+            )
+            return {
+                "session_id": session_id,
+                "message": message,
+                "action": "open_existing_incident",
+                "data": data,
+                "completed": True,
+            }
+
+        if wants_reenter:
+            return self._prompt_for_reference_id(
+                session_id,
+                message="Please enter another REF ID to continue.",
+            )
+
+        return self._build_reference_exists_response(
+            session_id,
+            pending.get("reference_id", ""),
+            pending.get("incident_id", ""),
+        )
+
+    async def _maybe_capture_reference_id(
+        self,
+        session_id: str,
+        user_message: str,
+    ) -> Optional[Dict[str, Any]]:
+        """Capture the reference ID before the normal chat flow begins."""
+        session = self.active_sessions[session_id]
+        if session.get("pending_reference_match"):
+            return self._handle_reference_match_choice(session_id, user_message)
+
+        if not session.get("awaiting_reference_id"):
+            return None
+
+        reference_id = normalize_demo_reference_id(user_message)
+        if reference_id is None:
+            return self._prompt_for_reference_id(
+                session_id,
+                message="Please enter a valid REF ID to continue.",
+            )
+
+        existing_incident = self.incident_service.get_incident_by_reference_id(
+            reference_id,
+            tenant_id=session.get("tenant_id"),
+            exclude_incident_id=session.get("incident_id"),
+        )
+        if existing_incident:
+            return self._build_reference_exists_response(
+                session_id,
+                reference_id,
+                existing_incident.incident_id,
+            )
+
+        session["reference_id"] = reference_id
+        session["awaiting_reference_id"] = False
+        session["structured_data"]["reference_id"] = reference_id
+        session.setdefault("initial_data", {})["reference_id"] = reference_id
+
+        incident_id = session.get("incident_id")
+        if incident_id and self.incident_service.get_incident(incident_id):
+            self.incident_service.update_incident(
+                incident_id,
+                reference_id=reference_id,
+                structured_data=session.get("structured_data", {}),
+            )
+
+        initial_description = (
+            session.get("initial_data", {}).get("description")
+            or session.get("initial_data", {}).get("incident_description")
+        )
+        use_case = session.get("use_case")
+        if use_case and initial_description:
+            result = await self._start_new_workflow(
+                session_id=session_id,
+                use_case=use_case,
+                user_message=initial_description,
+                processed_input={
+                    "text": initial_description,
+                    "original_type": "text",
+                    "confidence": 1.0,
+                    "metadata": {},
+                },
+            )
+            result["message"] = (
+                f"Reference ID {reference_id} recorded.\n\n{result['message']}"
+            )
+            return result
+
+        message = (
+            f"Reference ID {reference_id} recorded. "
+            "Please describe your gas incident so I can start the workflow."
+        )
+        data = {
+            "reference_id": reference_id,
+            "awaiting_incident_report": True,
+        }
+        self._add_to_history(
+            session_id,
+            "agent",
+            {"message": message, "action": "awaiting_incident_report", "data": data},
+        )
+        return {
+            "session_id": session_id,
+            "message": message,
+            "action": "awaiting_incident_report",
+            "data": data,
+            "completed": False,
+        }
 
     async def _start_new_workflow(
         self, session_id: str, use_case: str,
@@ -1509,6 +1774,7 @@ class AgentOrchestrator:
                 classified_use_case=use_case,
                 status=IncidentStatus.IN_PROGRESS,
                 workflow_execution_id=session.get("execution_id"),
+                reference_id=session.get("reference_id"),
                 structured_data=session.get("structured_data", {}),
             )
             return incident_id
@@ -1547,6 +1813,7 @@ class AgentOrchestrator:
             geo_location=reported_geo,
             user_geo_location=reported_geo,
             structured_data=session.get("structured_data", {}),
+            reference_id=session.get("reference_id"),
             reported_by_staff_id=session.get("reported_by_staff_id"),
         )
         session["incident_id"] = incident.incident_id
@@ -1697,6 +1964,8 @@ class AgentOrchestrator:
         if not outcome:
             return "Thank you for reporting. Your incident has been logged."
 
+        reference_id = incident_id.replace("INC-", "REF-", 1)
+
         outcome_messages = {
             "emergency_dispatch": (
                 "EMERGENCY: Response Activated\n\n"
@@ -1716,7 +1985,7 @@ class AgentOrchestrator:
                 "- A field engineer will be assigned shortly\n"
                 "- You'll receive a call to schedule the visit\n"
                 "- Expected response time: Within 4 hours\n\n"
-                f"Your incident has been logged. Reference ID: {incident_id}\n\n"
+                f"Your incident has been logged. Reference ID: {reference_id}\n\n"
                 "In the meantime:\n"
                 "- Ensure good ventilation\n"
                 "- Avoid using electrical appliances near the smell\n"
@@ -1729,7 +1998,7 @@ class AgentOrchestrator:
                 "- Your report will be reviewed by our team\n"
                 "- We may contact you for additional information\n"
                 "- If needed, we'll schedule an inspection\n\n"
-                f"Your incident has been logged. Reference ID: {incident_id}\n\n"
+                f"Your incident has been logged. Reference ID: {reference_id}\n\n"
                 "Safety tips:\n"
                 "- Keep the area well-ventilated\n"
                 "- Monitor for any changes\n"
@@ -1740,7 +2009,7 @@ class AgentOrchestrator:
                 "Thank you for reporting this concern. Based on your responses, "
                 "this appears to be a low-risk situation that can be managed with proper precautions.\n\n"
                 "ℹ️ This appears to be a false alarm.\n\n"
-                f"Your incident has been logged for our records. Reference ID: {incident_id}\n\n"
+                f"Your incident has been logged for our records. Reference ID: {reference_id}\n\n"
                 "Safety recommendations:\n"
                 "- Ensure all areas are well-ventilated\n"
                 "- Check that all gas appliances are turned off when not in use\n"
@@ -1752,14 +2021,14 @@ class AgentOrchestrator:
                 "Incident Logged\n\n"
                 "Thank you for your vigilance in reporting this. Based on the information provided, "
                 "this does not appear to require immediate action.\n\n"
-                f"Your report has been logged for our records. Reference ID: {incident_id}\n\n"
+                f"Your report has been logged for our records. Reference ID: {reference_id}\n\n"
                 "If you have any concerns or notice any changes, please don't hesitate to contact us again."
             ),
         }
 
         message = outcome_messages.get(
             outcome,
-            f"Incident Logged\n\nYour incident has been logged. Reference ID: {incident_id}",
+            f"Incident Logged\n\nYour incident has been logged. Reference ID: {reference_id}",
         )
 
         return message

@@ -16,6 +16,7 @@ import {
   backfillConnector,
 } from '../services/api';
 import CustomSelect from '../components/CustomSelect';
+import { formatIncidentId } from '../utils/incidentIds';
 
 const HEALTH_DOT = {
   healthy: '#047857',
@@ -481,7 +482,7 @@ const ConnectorStatus = () => {
                     </td>
                     <td style={S.td}><EventStatusBadge status={evt.status} /></td>
                     <td style={{ ...S.td, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', fontSize: '0.78rem' }}>
-                      {evt.incident_id ? evt.incident_id.replace(/^INC_/i, '').toUpperCase() : '-'}
+                      {evt.incident_id ? formatIncidentId(evt.incident_id) : '-'}
                     </td>
                     <td style={{ ...S.td, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', fontSize: '0.78rem' }}>
                       {evt.external_id || '-'}
@@ -589,7 +590,7 @@ const ConnectorStatus = () => {
                   <tr key={evt.event_id} style={S.tr}>
                     <td style={S.td}>{evt.event_type}</td>
                     <td style={{ ...S.td, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', fontSize: '0.78rem' }}>
-                      {evt.incident_id || '-'}
+                      {evt.incident_id ? formatIncidentId(evt.incident_id) : '-'}
                     </td>
                     <td style={{ ...S.td, maxWidth: '220px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: '#b91c1c' }}>
                       {evt.error_message || '-'}

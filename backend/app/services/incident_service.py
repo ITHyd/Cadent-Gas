@@ -1,5 +1,6 @@
 """Incident Service for persistence and lifecycle management"""
 import logging
+import re
 from typing import Dict, Any, List, Optional
 from datetime import datetime, timedelta
 import uuid
@@ -115,6 +116,7 @@ class IncidentService:
         # In-memory storage (in production, use database)
         self.incidents: Dict[str, Incident] = {}
         self.agents: Dict[str, Agent] = {}
+        self._incident_sequence = 1000
         # In-app notification store:  user_id -> [notification_dicts]
         self.user_notifications: Dict[str, List[Dict[str, Any]]] = {}
         # Tenant → user_id caches for notification routing
@@ -128,6 +130,17 @@ class IncidentService:
         """Inject the ConnectorSyncService for outbound sync."""
         self._sync_service = sync_service
         logger.info("ConnectorSyncService attached to IncidentService")
+
+    def _next_incident_id(self) -> str:
+        """Generate user-friendly incident IDs like INC-1001."""
+        max_existing = self._incident_sequence
+        for incident_id in self.incidents.keys():
+            match = re.fullmatch(r"INC-(\d+)", str(incident_id).upper())
+            if match:
+                max_existing = max(max_existing, int(match.group(1)))
+
+        self._incident_sequence = max_existing + 1
+        return f"INC-{self._incident_sequence}"
 
     async def load_tenant_users(self, db) -> None:
         """Load company/agent user_ids grouped by tenant from MongoDB.
@@ -694,6 +707,7 @@ class IncidentService:
         geo_location: Optional[Dict[str, float]] = None,
         user_geo_location: Optional[Dict[str, float]] = None,
         structured_data: Optional[Dict[str, Any]] = None,
+        reference_id: Optional[str] = None,
         reported_by_staff_id: Optional[str] = None,
     ) -> Incident:
         """
@@ -714,7 +728,7 @@ class IncidentService:
         Returns:
             Created Incident object
         """
-        incident_id = f"INC_{uuid.uuid4().hex[:12].upper()}"
+        incident_id = self._next_incident_id()
         
         incident = Incident(
             incident_id=incident_id,
@@ -723,6 +737,7 @@ class IncidentService:
             user_name=user_name,
             user_phone=user_phone,
             user_address=user_address,
+            reference_id=reference_id,
             description=description,
             incident_type=incident_type,
             location=location,
@@ -1455,6 +1470,36 @@ class IncidentService:
     def get_incident(self, incident_id: str) -> Optional[Incident]:
         """Get incident by ID"""
         return self.incidents.get(incident_id)
+
+    def delete_incident(self, incident_id: str) -> bool:
+        """Delete an incident from the in-memory store."""
+        if incident_id not in self.incidents:
+            return False
+
+        del self.incidents[incident_id]
+        logger.info(f"Deleted incident {incident_id}")
+        return True
+
+    def get_incident_by_reference_id(
+        self,
+        reference_id: str,
+        tenant_id: Optional[str] = None,
+        exclude_incident_id: Optional[str] = None,
+    ) -> Optional[Incident]:
+        """Return the first incident matching a reference ID."""
+        if not reference_id:
+            return None
+
+        normalized_reference = str(reference_id).strip().upper()
+        for incident in self.incidents.values():
+            if exclude_incident_id and incident.incident_id == exclude_incident_id:
+                continue
+            if tenant_id is not None and incident.tenant_id != tenant_id:
+                continue
+            if (incident.reference_id or "").strip().upper() == normalized_reference:
+                return incident
+
+        return None
     
     def get_user_incidents(
         self,

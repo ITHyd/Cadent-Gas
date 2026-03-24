@@ -7,6 +7,37 @@ const getAuthHeaders = () => {
   return token ? { Authorization: `Bearer ${token}` } : {};
 };
 
+const clearStoredAuth = () => {
+  localStorage.removeItem('access_token');
+  localStorage.removeItem('refresh_token');
+};
+
+const notifyAuthExpired = () => {
+  window.dispatchEvent(new Event('auth-expired'));
+};
+
+const parseJwtPayload = (token) => {
+  try {
+    const payload = token?.split('.')?.[1];
+    if (!payload) return null;
+
+    const normalized = payload
+      .replace(/-/g, '+')
+      .replace(/_/g, '/')
+      .padEnd(Math.ceil(payload.length / 4) * 4, '=');
+
+    return JSON.parse(window.atob(normalized));
+  } catch {
+    return null;
+  }
+};
+
+const isTokenExpiringSoon = (token, minValiditySeconds = 30) => {
+  const payload = parseJwtPayload(token);
+  if (!payload?.exp) return true;
+  return payload.exp * 1000 - Date.now() <= minValiditySeconds * 1000;
+};
+
 let _refreshPromise = null;
 
 const tryRefreshToken = async () => {
@@ -42,6 +73,26 @@ const tryRefreshToken = async () => {
   return _refreshPromise;
 };
 
+export const ensureFreshAccessToken = async ({ minValiditySeconds = 30 } = {}) => {
+  const currentToken = localStorage.getItem('access_token');
+  if (currentToken && !isTokenExpiringSoon(currentToken, minValiditySeconds)) {
+    return currentToken;
+  }
+
+  const hadSession = Boolean(currentToken || localStorage.getItem('refresh_token'));
+  const refreshed = await tryRefreshToken();
+  const nextToken = localStorage.getItem('access_token');
+  if (refreshed && nextToken) {
+    return nextToken;
+  }
+
+  if (hadSession) {
+    clearStoredAuth();
+    notifyAuthExpired();
+  }
+  return null;
+};
+
 export const authFetch = async (url, options = {}) => {
   const headers = { ...getAuthHeaders(), ...(options.headers || {}) };
   const response = await fetch(url, { ...options, headers });
@@ -56,9 +107,8 @@ export const authFetch = async (url, options = {}) => {
     }
 
     // Refresh failed — clear everything and signal logout
-    localStorage.removeItem('access_token');
-    localStorage.removeItem('refresh_token');
-    window.dispatchEvent(new Event('auth-expired'));
+    clearStoredAuth();
+    notifyAuthExpired();
   }
 
   return response;

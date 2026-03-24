@@ -3,6 +3,7 @@ import { useNavigate, useLocation } from 'react-router-dom';
 import { reportIncident, submitManualReport } from '../services/api';
 import { useAuth } from '../contexts/AuthContext';
 import { formatUseCase } from '../utils/formatters';
+import { formatReferenceId } from '../utils/incidentIds';
 import ProfileDropdown from '../components/ProfileDropdown';
 
 const SEVERITY_OPTIONS = [
@@ -114,6 +115,7 @@ const IncidentReport = () => {
           state: {
             incidentId: response.incident_id,
             useCase: response.use_case,
+            description,
             locationText: location,
             geoLocation: userGeoLocation || response.user_geo_location || null,
           },
@@ -167,7 +169,7 @@ const IncidentReport = () => {
             <div style={{ flex: 1, minWidth: '160px' }}>
               <div style={{ fontSize: '0.82rem', color: '#5f738a', fontWeight: 600, marginBottom: '6px' }}>Reference ID</div>
               <div style={{ fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', fontWeight: 700, fontSize: '0.95rem', color: '#030304' }}>
-                REF-{submittedId?.replace(/^INC_/i, '').toUpperCase()}
+                {formatReferenceId(submittedId)}
               </div>
             </div>
             {classifiedUseCase && (

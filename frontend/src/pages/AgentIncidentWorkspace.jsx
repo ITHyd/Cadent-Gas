@@ -15,6 +15,7 @@ import {
   updateAgentLocation,
   updateItemRequest,
 } from '../services/api';
+import { formatIncidentId } from '../utils/incidentIds';
 import CustomSelect from '../components/CustomSelect';
 
 delete L.Icon.Default.prototype._getIconUrl;
@@ -559,7 +560,7 @@ const AgentIncidentWorkspace = () => {
           <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', flexWrap: 'wrap' }}>
             <div>
               <span className="eyebrow">{roleBanner ? `${roleBanner.label} Workspace` : 'Agent Workspace'}</span>
-              <h1 className="page-heading" style={{ marginTop: '10px' }}>{incident.incident_id}</h1>
+              <h1 className="page-heading" style={{ marginTop: '10px' }}>{formatIncidentId(incident.incident_id)}</h1>
               <p className="page-subheading">
                 {(incident.classified_use_case || incident.incident_type || 'Incident').replaceAll('_', ' ')} &mdash; {incident.user_address || incident.location || 'Location unavailable'}
               </p>

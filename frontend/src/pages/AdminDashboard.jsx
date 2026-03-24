@@ -22,6 +22,7 @@ import {
   updateItemRequest,
   validateIncident,
 } from '../services/api';
+import { formatIncidentId } from '../utils/incidentIds';
 import { useAuth } from '../contexts/AuthContext';
 import ProfileDropdown from '../components/ProfileDropdown';
 import NotificationBell from '../components/NotificationBell';
@@ -898,7 +899,7 @@ const AdminDashboard = () => {
           <div style={{ flex: 1, minWidth: 0 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
               <span style={{ fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', fontWeight: 700, color: '#345473', fontSize: '0.82rem' }}>
-                {request.incident_id?.replace(/^INC_/i, '').toUpperCase()}
+                {formatIncidentId(request.incident_id)}
               </span>
               <span style={{
                 padding: '2px 7px', borderRadius: '999px', fontSize: '0.7rem', fontWeight: 700,
@@ -979,7 +980,7 @@ const AdminDashboard = () => {
         <div className="panel-soft" style={{ padding: '10px', borderRadius: '12px' }}>
           <div style={{ fontSize: '0.78rem', fontWeight: 700, color: '#030304', marginBottom: '6px' }}>Incident Context</div>
           <div style={{ display: 'grid', gap: '4px', fontSize: '0.82rem', color: '#4d6178' }}>
-            <div><strong>Incident:</strong> {req.incident_id}</div>
+            <div><strong>Incident:</strong> {formatIncidentId(req.incident_id)}</div>
             <div><strong>Type:</strong> {(req.incident_type || 'N/A').replaceAll('_', ' ')}</div>
             <div><strong>User:</strong> {req.user_name || 'N/A'} {req.user_phone ? `(${req.user_phone})` : ''}</div>
             <div><strong>Location:</strong> {req.incident_location || 'N/A'}</div>
@@ -1059,7 +1060,7 @@ const AdminDashboard = () => {
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '8px' }}>
                   <div style={{ minWidth: 0 }}>
                     <div style={{ fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', fontWeight: 800, color: '#345473', fontSize: '0.82rem' }}>
-                      {incident.incident_id?.replace(/^INC_/i, '').toUpperCase()}
+                      {formatIncidentId(incident.incident_id)}
                     </div>
                     <div style={{ marginTop: '3px', color: '#0f172a', fontSize: '0.9rem', fontWeight: 700 }}>
                       {formatCategoryLabel(incident.incident_type || incident.classified_use_case || 'unclassified')}
@@ -1408,7 +1409,7 @@ const AdminDashboard = () => {
                           <tr key={incident.incident_id} onClick={() => handleIncidentRowClick(incident)} style={{ cursor: 'pointer' }}>
                             <td>
                               <span style={{ fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', fontWeight: 700, color: '#345473' }}>
-                                {incident.incident_id?.replace(/^INC_/i, '').toUpperCase()}
+                                {formatIncidentId(incident.incident_id)}
                               </span>
                             </td>
                             <td>{(incident.incident_type || incident.classified_use_case || 'N/A').replaceAll('_', ' ')}</td>
@@ -1963,7 +1964,7 @@ const AdminDashboard = () => {
                     >
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
                         <span style={{ fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', fontWeight: 800, color: '#345473' }}>
-                          {incident.incident_id}
+                          {formatIncidentId(incident.incident_id)}
                         </span>
                         <span style={{ padding: '3px 8px', borderRadius: '999px', background: riskMeta.bg, color: riskMeta.color, fontSize: '0.72rem', fontWeight: 800 }}>
                           {riskMeta.label} {Math.round((incident.risk_score ?? 0) * 100)}%
@@ -2053,7 +2054,7 @@ const AdminDashboard = () => {
                   <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
                     <h2 style={{ margin: 0, fontSize: '1.05rem', color: '#0f172a' }}>Incident Details</h2>
                     <span style={{ fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', fontSize: '0.78rem', color: '#475569', background: '#f1f5f9', padding: '2px 8px', borderRadius: '6px' }}>
-                      {inc.incident_id}
+                      {formatIncidentId(inc.incident_id)}
                     </span>
                     <span style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', borderRadius: '999px', padding: '3px 10px', background: statusMeta.bg, color: statusMeta.text, fontSize: '0.74rem', fontWeight: 700 }}>
                       <span style={{ width: 6, height: 6, borderRadius: '50%', background: statusMeta.dot }} />

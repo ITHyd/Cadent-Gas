@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { formatUseCase } from '../utils/formatters';
+import { formatIncidentId } from '../utils/incidentIds';
 import {
   getTenants, getSuperTenantDetail, getTenantConnectors,
   getAdminGroups, createAdminGroup, updateAdminGroup, deleteAdminGroup, assignUserToGroup,
@@ -502,7 +503,7 @@ const TenantManagement = () => {
                                           {tenantDetail.recent_incidents.map((inc) => (
                                             <tr key={inc.incident_id}>
                                               <td style={{ padding: '0.625rem 1rem', fontSize: '0.8rem', fontFamily: 'monospace', color: '#667eea', fontWeight: 600, borderBottom: '1px solid #f1f5f9' }}>
-                                                {inc.incident_id?.replace(/^INC_/i, '').toUpperCase()}
+                                                {formatIncidentId(inc.incident_id)}
                                               </td>
                                               <td style={{ padding: '0.625rem 1rem', fontSize: '0.8rem', color: '#334155', borderBottom: '1px solid #f1f5f9' }}>
                                                 {inc.type || '—'}

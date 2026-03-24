@@ -16,19 +16,15 @@ import React, {
 import { useNavigate } from "react-router-dom";
 import { connectWebSocket } from "../services/websocket";
 import { getTenantWorkflows, lookupCustomerByPhone } from "../services/api";
+import {
+  normalizeDemoReferenceId,
+} from "../constants/referenceIds";
 import ChatMessage from "./ChatMessage";
 import { formatUseCase } from "../utils/formatters";
 
 const DEFAULT_GRADIENT = "#8DE971";
 
 const formatUseCaseName = formatUseCase;
-const REPORTER_TYPE_OPTIONS = [
-  { label: "Occupier", value: "occupier" },
-  { label: "GSRI", value: "gsri" },
-  { label: "Landlord / HA", value: "landlord_ha" },
-  { label: "Emergency Services", value: "emergency_services" },
-  { label: "Remote Detector", value: "remote_detector" },
-];
 const HIDDEN_STARTER_USE_CASES = new Set([
   "co_alarm_fireangel",
   "co_alarm_firehawk",
@@ -70,9 +66,8 @@ const FloatingChatWidget = forwardRef(function FloatingChatWidget(
   const [workflowStarted, setWorkflowStarted] = useState(false);
   const [chatOpen, setChatOpen] = useState(false);
   const [showAllCategories, setShowAllCategories] = useState(false);
-  const [selectedReporterType, setSelectedReporterType] = useState(null);
-  const [isReporterSelectionPending, setIsReporterSelectionPending] =
-    useState(false);
+  const [selectedReferenceId, setSelectedReferenceId] = useState(null);
+  const [isReferenceIdPending, setIsReferenceIdPending] = useState(false);
 
   // On-behalf-of-customer flow (company/call-center role)
   const isCallCenter = userRole === "company";
@@ -82,6 +77,7 @@ const FloatingChatWidget = forwardRef(function FloatingChatWidget(
   const messagesEndRef = useRef(null);
   const wsRef = useRef(null);
   const pendingFirstInputRef = useRef(null);
+  const referenceValidationPendingRef = useRef(false);
 
   // Expose open() so parent (hero button) can programmatically open the widget
   useImperativeHandle(ref, () => ({
@@ -338,133 +334,195 @@ const FloatingChatWidget = forwardRef(function FloatingChatWidget(
     ]);
   };
 
-  const getReporterTypePrompt = () => {
-    if (customerDetails) {
-      return "Please choose the reporter type to continue this report.";
-    }
-
-    const firstName = userDetails?.name ? userDetails.name.split(" ")[0] : "";
-    return firstName
-      ? `Hi ${firstName}! Before we begin, please choose the reporter type.`
-      : "Hello! Before we begin, please choose the reporter type.";
+  const promptForReportType = () => {
+    addAgentMessage(
+      "Thanks. Now choose the report type to get the right triage flow, or describe the issue in your own words.",
+      { reportTypePrompt: true },
+    );
   };
 
-  const promptForReporterType = ({ replace = false } = {}) => {
-    setIsReporterSelectionPending(true);
-    const reporterPromptMessage = {
-      id: `msg_${Date.now()}`,
+  const promptForCustomerPhone = () => {
+    setPhoneCollectionPhase(true);
+    addAgentMessage(
+      "Please enter the customer's registered phone number to look up their details.",
+      { phonePrompt: true },
+    );
+  };
+
+  const promptForReferenceId = ({ replace = false } = {}) => {
+    setIsReferenceIdPending(true);
+    const refPromptMessage = {
+      id: `msg_${Date.now()}_ref_prompt`,
       role: "agent",
-      content: getReporterTypePrompt(),
+      content: "Please enter the REF ID before we begin.",
       timestamp: new Date().toISOString(),
       data: {
-        reporterTypePrompt: true,
-        options: REPORTER_TYPE_OPTIONS.map((option) => option.label),
+        refIdPrompt: true,
       },
     };
 
     if (replace) {
-      setMessages([reporterPromptMessage]);
+      setMessages([refPromptMessage]);
       return;
     }
 
-    setMessages((prev) => [...prev, reporterPromptMessage]);
+    setMessages((prev) => [...prev, refPromptMessage]);
   };
 
-  const handleReporterTypeSelect = (reporterOption) => {
-    const reporterType =
-      typeof reporterOption === "string"
-        ? REPORTER_TYPE_OPTIONS.find(
-            (option) => option.label === reporterOption,
-          )
-        : reporterOption;
+  const handleReferenceIdSelect = (
+    referenceOption,
+    { appendUserMessage = true, displayValue } = {},
+  ) => {
+    const normalizedReferenceId =
+      normalizeDemoReferenceId(
+        typeof referenceOption === "string"
+          ? referenceOption
+          : referenceOption?.label,
+      ) || normalizeDemoReferenceId(referenceOption);
 
-    if (!reporterType) return;
+    if (!normalizedReferenceId) {
+      addAgentMessage(
+        "Please enter a valid REF ID to continue.",
+        {
+          refIdPrompt: true,
+        },
+      );
+      return;
+    }
 
-    setSelectedReporterType(reporterType);
-    setIsReporterSelectionPending(false);
-    if (isCallCenter) {
-      setPhoneCollectionPhase(true);
+    setSelectedReferenceId(normalizedReferenceId);
+    setIsReferenceIdPending(false);
+    if (appendUserMessage) {
       setMessages((prev) => [
         ...prev,
         {
           id: `msg_${Date.now()}`,
           role: "user",
-          content: reporterType.label,
+          content: displayValue || normalizedReferenceId,
           timestamp: new Date().toISOString(),
-        },
-        {
-          id: `msg_${Date.now()}_phone_prompt`,
-          role: "agent",
-          content:
-            "Thanks. Please enter the customer's registered phone number to look up their details.",
-          timestamp: new Date().toISOString(),
-          data: { phonePrompt: true },
         },
       ]);
+    }
+    setPhoneCollectionPhase(false);
+
+    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+      referenceValidationPendingRef.current = true;
+      wsRef.current.send(
+        JSON.stringify({
+          type: "start",
+          incident_id: `incident_${Date.now()}`,
+          tenant_id: tenantId,
+          user_id: effectiveUserId,
+          use_case: "",
+          initial_data: {
+            ...buildInitialDataFull(),
+            reference_id: normalizedReferenceId,
+          },
+        }),
+      );
       return;
     }
 
-    setMessages((prev) => [
-      ...prev,
-      {
-        id: `msg_${Date.now()}`,
-        role: "user",
-        content: reporterType.label,
-        timestamp: new Date().toISOString(),
-      },
-      {
-        id: `msg_${Date.now()}_report_type`,
-        role: "agent",
-        content:
-          "Thanks. Now choose the report type to get the right triage flow, or describe the issue in your own words.",
-        timestamp: new Date().toISOString(),
-        data: { reportTypePrompt: true },
-      },
-    ]);
+    if (isCallCenter) {
+      promptForCustomerPhone();
+      return;
+    }
+    promptForReportType();
   };
 
-  const startIncident = () => {
+  const startIncident = async () => {
     setChatOpen(true);
     const newSessionId = `session_${Date.now()}`;
     setSessionId(newSessionId);
     setIncidentStarted(true);
     setWorkflowStarted(false);
     setShowAllCategories(false);
-    setSelectedReporterType(null);
-    setIsReporterSelectionPending(false);
+    setSelectedReferenceId(null);
+    setIsReferenceIdPending(false);
     setCustomerDetails(null);
     setPhoneCollectionPhase(false);
+    referenceValidationPendingRef.current = false;
 
-    const ws = connectWebSocket(newSessionId);
-    wsRef.current = ws;
+    try {
+      const ws = await connectWebSocket(newSessionId);
+      wsRef.current = ws;
 
-    ws.onopen = () => {
-      setIsConnected(true);
+      ws.onopen = () => {
+        setIsConnected(true);
+        promptForReferenceId({ replace: true });
+      };
 
-      if (isCallCenter) {
-        promptForReporterType({ replace: true });
-      } else {
-        promptForReporterType({ replace: true });
-      }
-    };
+      ws.onmessage = (event) => {
+        const response = JSON.parse(event.data);
+        handleAgentMessage(response);
+      };
 
-    ws.onmessage = (event) => {
-      const response = JSON.parse(event.data);
-      handleAgentMessage(response);
-    };
-
-    ws.onerror = () => setIsConnected(false);
-    ws.onclose = () => setIsConnected(false);
+      ws.onerror = () => setIsConnected(false);
+      ws.onclose = () => setIsConnected(false);
+    } catch (error) {
+      setIsConnected(false);
+      setMessages([
+        {
+          id: `msg_${Date.now()}`,
+          role: "agent",
+          content: error.message || "Your session expired. Please sign in again.",
+          timestamp: new Date().toISOString(),
+        },
+      ]);
+    }
   };
 
   const handleAgentMessage = (response) => {
+    if (response.type === "typing") {
+      setIsTyping(Boolean(response.typing));
+      return;
+    }
+
     if (response.type === "agent_message") {
       const newSid = response.session_id;
       if (newSid && newSid !== sessionId) {
         setSessionId(newSid);
       }
 
-      if (pendingFirstInputRef.current && newSid) {
+      if (response.action === "reference_id_prompt") {
+        setIsReferenceIdPending(true);
+        setSelectedReferenceId(null);
+      } else if (
+        response.action === "awaiting_incident_report" ||
+        response.action === "reference_id_exists" ||
+        response.action === "open_existing_incident"
+      ) {
+        setIsReferenceIdPending(false);
+      }
+
+      if (
+        referenceValidationPendingRef.current &&
+        response.action === "awaiting_incident_report"
+      ) {
+        referenceValidationPendingRef.current = false;
+        setIsTyping(false);
+        if (isCallCenter && !customerDetails) {
+          promptForCustomerPhone();
+        } else {
+          promptForReportType();
+        }
+        return;
+      }
+
+      if (response.action === "reference_id_exists") {
+        referenceValidationPendingRef.current = false;
+        setPhoneCollectionPhase(false);
+      }
+
+      if (response.action === "reference_id_prompt") {
+        referenceValidationPendingRef.current = false;
+      }
+
+      if (
+        pendingFirstInputRef.current &&
+        newSid &&
+        response.action === "awaiting_incident_report"
+      ) {
         const firstInput = pendingFirstInputRef.current;
         pendingFirstInputRef.current = null;
         setTimeout(() => {
@@ -485,8 +543,32 @@ const FloatingChatWidget = forwardRef(function FloatingChatWidget(
         return;
       }
 
+      if (response.action === "open_existing_incident") {
+        referenceValidationPendingRef.current = false;
+        const agentMessage = {
+          id: `msg_${Date.now()}`,
+          role: "agent",
+          content: response.message,
+          timestamp: new Date().toISOString(),
+          data: response.data || {},
+          completed: true,
+        };
+        setMessages((prev) => [...prev, agentMessage]);
+        setIsTyping(false);
+        pendingFirstInputRef.current = null;
+
+        setTimeout(() => {
+          navigate(
+            response.data?.redirect ||
+              `/my-reports/${response.data?.incident_id || ""}`,
+          );
+        }, 800);
+        return;
+      }
+
       // Handle no-workflow
       if (response.action === "no_workflow") {
+        referenceValidationPendingRef.current = false;
         const noWorkflowMsg = {
           id: `msg_${Date.now()}`,
           role: "agent",
@@ -571,10 +653,9 @@ const FloatingChatWidget = forwardRef(function FloatingChatWidget(
   const buildInitialDataFull = (extra = {}) => ({
     ...extra,
     user_details: effectiveUserDetails,
-    ...(selectedReporterType
+    ...(selectedReferenceId
       ? {
-          reporter_type: selectedReporterType.value,
-          reporter_type_label: selectedReporterType.label,
+          reference_id: selectedReferenceId,
         }
       : {}),
     ...(customerDetails
@@ -674,10 +755,7 @@ const FloatingChatWidget = forwardRef(function FloatingChatWidget(
               },
             ]);
             setIsTyping(false);
-            addAgentMessage(
-              "Thanks. Now choose the report type to get the right triage flow, or describe the issue in your own words.",
-              { reportTypePrompt: true },
-            );
+            promptForReportType();
           }, 600);
         })
         .catch(() => {
@@ -698,20 +776,41 @@ const FloatingChatWidget = forwardRef(function FloatingChatWidget(
       return;
     }
 
-    if (isReporterSelectionPending) {
+    if (isReferenceIdPending) {
       setInputText("");
-      const matchedReporterType = REPORTER_TYPE_OPTIONS.find(
-        (option) => option.label.toLowerCase() === text.toLowerCase(),
-      );
+      const normalizedReferenceId = normalizeDemoReferenceId(text);
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: `msg_${Date.now()}`,
+          role: "user",
+          content: normalizedReferenceId || text,
+          timestamp: new Date().toISOString(),
+        },
+      ]);
 
-      if (matchedReporterType) {
-        handleReporterTypeSelect(matchedReporterType);
+      if (workflowStarted) {
+        if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+          wsRef.current.send(
+            JSON.stringify({
+              type: "user_input",
+              session_id: sessionId,
+              input: { message: normalizedReferenceId || text },
+            }),
+          );
+        }
+        return;
+      }
+
+      if (normalizedReferenceId) {
+        handleReferenceIdSelect(normalizedReferenceId, {
+          appendUserMessage: false,
+        });
       } else {
         addAgentMessage(
-          "Please choose one of the reporter types shown above to continue.",
+          "Please enter a valid REF ID to continue.",
           {
-            reporterTypePrompt: true,
-            options: REPORTER_TYPE_OPTIONS.map((option) => option.label),
+            refIdPrompt: true,
           },
         );
       }
@@ -843,13 +942,11 @@ const FloatingChatWidget = forwardRef(function FloatingChatWidget(
               {incidentStarted
                 ? isCallCenter
                   ? customerDetails
-                    ? selectedReporterType
-                      ? `Customer: ${customerDetails.full_name} · Reporter: ${selectedReporterType.label}`
-                      : `Customer: ${customerDetails.full_name}`
+                    ? `Customer: ${customerDetails.full_name}`
                     : "Enter customer phone to begin"
-                  : selectedReporterType
-                    ? `Reporter: ${selectedReporterType.label}`
-                    : "Select reporter type to begin"
+                  : selectedReferenceId
+                    ? `REF ID: ${selectedReferenceId}`
+                    : "Enter REF ID to begin"
                 : "Ready to assist you"}
             </p>
           </div>
@@ -879,15 +976,15 @@ const FloatingChatWidget = forwardRef(function FloatingChatWidget(
                     <ChatMessage
                       message={message}
                       onOptionClick={
-                        message.data?.reporterTypePrompt
-                          ? handleReporterTypeSelect
+                        message.data?.refIdPrompt
+                          ? handleReferenceIdSelect
                           : handleIncidentOptionClick
                       }
                     />
                     {message.data?.reportTypePrompt &&
                       message.role === "agent" &&
-                      !isReporterSelectionPending &&
-                      !!selectedReporterType &&
+                      !isReferenceIdPending &&
+                      !!selectedReferenceId &&
                       !workflowStarted &&
                       !phoneCollectionPhase && (
                         <div style={{ marginTop: "0.5rem", maxWidth: "90%" }}>
@@ -1019,8 +1116,8 @@ const FloatingChatWidget = forwardRef(function FloatingChatWidget(
                     placeholder={
                       phoneCollectionPhase
                         ? "Enter customer phone number..."
-                        : isReporterSelectionPending
-                          ? "Choose a reporter type..."
+                        : isReferenceIdPending
+                          ? "Enter REF ID..."
                           : "Type your message..."
                     }
                     disabled={!isConnected || isProcessing}
@@ -1044,8 +1141,8 @@ const FloatingChatWidget = forwardRef(function FloatingChatWidget(
                 <p style={styles.hint}>
                   {isProcessing
                     ? "Processing..."
-                    : isReporterSelectionPending
-                      ? "Choose a reporter type to continue"
+                    : isReferenceIdPending
+                      ? "Enter REF ID to continue"
                       : "Enter to send"}
                 </p>
               </>
