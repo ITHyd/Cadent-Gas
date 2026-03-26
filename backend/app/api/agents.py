@@ -22,6 +22,7 @@ workflow_engine = WorkflowEngine()
 
 # Active WebSocket connections
 active_connections: Dict[str, WebSocket] = {}
+transport_session_bindings: Dict[str, str] = {}
 
 
 @router.websocket("/ws/{session_id}")
@@ -58,6 +59,16 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str, token: Optio
                 # Start new agent session
                 await websocket.send_json({"type": "typing", "typing": True})
                 response = await handle_start_session(message, auth_payload)
+                if response.get("type") == "agent_message" and response.get("session_id"):
+                    transport_session_bindings[session_id] = response["session_id"]
+                await websocket.send_json({"type": "typing", "typing": False})
+                await websocket.send_json(response)
+
+            elif message_type == "resume_session":
+                await websocket.send_json({"type": "typing", "typing": True})
+                response = await handle_resume_session(message, auth_payload)
+                if response.get("type") == "agent_message" and response.get("session_id"):
+                    transport_session_bindings[session_id] = response["session_id"]
                 await websocket.send_json({"type": "typing", "typing": False})
                 await websocket.send_json(response)
 
@@ -92,19 +103,24 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str, token: Optio
                 })
 
     except WebSocketDisconnect:
-        logger.info(f"WebSocket disconnected: {session_id}")
+        agent_session_id = transport_session_bindings.pop(session_id, session_id)
+        logger.info(f"WebSocket disconnected: transport={session_id} agent={agent_session_id}")
         # Persist any in-progress workflow so the user can resume later
-        agent_orchestrator.handle_disconnect(session_id)
-        if session_id in active_connections:
-            del active_connections[session_id]
+        agent_orchestrator.handle_disconnect(agent_session_id)
+        active_connections.pop(session_id, None)
 
     except Exception as e:
-        logger.error(f"WebSocket error: {str(e)}")
-        agent_orchestrator.handle_disconnect(session_id)
-        await websocket.send_json({
-            "type": "error",
-            "message": str(e)
-        })
+        agent_session_id = transport_session_bindings.pop(session_id, session_id)
+        logger.error(f"WebSocket error: transport={session_id} agent={agent_session_id} error={str(e)}", exc_info=True)
+        agent_orchestrator.handle_disconnect(agent_session_id)
+        active_connections.pop(session_id, None)
+        try:
+            await websocket.send_json({
+                "type": "error",
+                "message": str(e)
+            })
+        except Exception:
+            logger.warning(f"Unable to send websocket error payload for transport={session_id}")
 
 
 async def handle_start_session(message: Dict[str, Any], auth_payload: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
@@ -167,6 +183,61 @@ async def handle_start_session(message: Dict[str, Any], auth_payload: Optional[D
     
     except Exception as e:
         logger.error(f"Start session error: {str(e)}", exc_info=True)
+        return {
+            "type": "error",
+            "message": str(e)
+        }
+
+
+async def handle_resume_session(message: Dict[str, Any], auth_payload: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """Reconnect to an existing incident by auto-resuming paused workflow state when available."""
+    try:
+        logger.info(f"Resuming session with message: {message}")
+        incident_id = message.get("incident_id")
+        tenant_id = message.get("tenant_id")
+        user_id = message.get("user_id")
+        use_case = message.get("use_case")
+        initial_data = message.get("initial_data", {})
+
+        if auth_payload:
+            role = auth_payload.get("role")
+            token_tenant = auth_payload.get("tenant_id")
+            token_user_id = auth_payload.get("user_id")
+            is_super = role in (UserRole.SUPER_USER.value, UserRole.ADMIN.value)
+
+            if not is_super:
+                if token_tenant and tenant_id and tenant_id != token_tenant:
+                    raise HTTPException(status_code=403, detail="Cross-tenant session resume denied")
+                is_company = role == UserRole.COMPANY.value
+                if not is_company and token_user_id and user_id and user_id != token_user_id:
+                    raise HTTPException(status_code=403, detail="User mismatch in session resume")
+
+            if not tenant_id:
+                tenant_id = token_tenant
+            if not user_id:
+                user_id = token_user_id
+
+        if use_case:
+            initial_data["use_case"] = use_case
+
+        workflow = await load_workflow(tenant_id, use_case)
+        result = await agent_orchestrator.reconnect_session(
+            incident_id=incident_id,
+            workflow=workflow,
+            tenant_id=tenant_id,
+            user_id=user_id,
+            initial_data=initial_data,
+        )
+        return {
+            "type": "agent_message",
+            "session_id": result["session_id"],
+            "message": result["message"],
+            "action": result["action"],
+            "data": result.get("data", {}),
+            "completed": result.get("completed", False),
+        }
+    except Exception as e:
+        logger.error(f"Resume session error: {str(e)}", exc_info=True)
         return {
             "type": "error",
             "message": str(e)

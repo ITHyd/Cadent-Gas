@@ -34,6 +34,8 @@ from app.services.workflow_seeder_co import (
 
 logger = logging.getLogger(__name__)
 
+CO_REFRESHABLE_USE_CASES = {CO_ALARM}
+
 # Map use cases to their workflow creator functions
 WORKFLOW_CREATORS = {
     CO_ALARM: _create_co_alarm_workflow,
@@ -66,6 +68,22 @@ def seed_default_workflows_for_tenant(tenant_id: str) -> None:
         existing = workflow_repository.get_latest_by_tenant_use_case(tenant_id, use_case)
 
         if existing is not None:
+            if use_case in CO_REFRESHABLE_USE_CASES:
+                creator = WORKFLOW_CREATORS.get(use_case)
+                if creator is None:
+                    logger.warning(f"  No template for use_case: {use_case}")
+                    continue
+                workflow = creator(tenant_id)
+                try:
+                    updated = workflow_repository.update(existing.workflow_id, workflow)
+                    seeded_count += 1
+                    logger.info(
+                        f"  Updated workflow '{use_case}' "
+                        f"(ID: {updated.workflow_id}, version {updated.version})"
+                    )
+                except (ValueError, KeyError) as e:
+                    logger.error(f"  Failed to update workflow '{use_case}': {e}")
+                continue
             logger.info(f"  Workflow '{use_case}' already exists (version {existing.version})")
             continue
 
@@ -93,7 +111,16 @@ def seed_default_workflows_for_tenant(tenant_id: str) -> None:
     for subflow_use_case, creator in CO_ALARM_SUBWORKFLOW_CREATORS.items():
         existing = workflow_repository.get_latest_by_tenant_use_case(tenant_id, subflow_use_case)
         if existing is not None:
-            logger.info(f"  Manufacturer sub-workflow '{subflow_use_case}' already exists (version {existing.version})")
+            workflow = creator(tenant_id)
+            try:
+                updated = workflow_repository.update(existing.workflow_id, workflow)
+                manufacturer_seeded += 1
+                logger.info(
+                    f"  Updated manufacturer sub-workflow '{subflow_use_case}' "
+                    f"(ID: {updated.workflow_id}, version {updated.version})"
+                )
+            except (ValueError, KeyError) as e:
+                logger.error(f"  Failed to update manufacturer sub-workflow '{subflow_use_case}': {e}")
             continue
 
         workflow = creator(tenant_id)

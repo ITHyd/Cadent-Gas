@@ -24,85 +24,123 @@ const AgentChat = () => {
 
   const wsRef = useRef(null);
   const messagesEndRef = useRef(null);
+  const reconnectTimerRef = useRef(null);
+  const reconnectAttemptsRef = useRef(0);
+  const manualCloseRef = useRef(false);
+  const hasStartedRef = useRef(false);
+  const isCompleteRef = useRef(false);
 
   useEffect(() => {
-    const newSessionId = `session_${Date.now()}`;
-    setSessionId(newSessionId);
+    isCompleteRef.current = isComplete;
+  }, [isComplete]);
 
+  useEffect(() => {
     let isCancelled = false;
-    let ws;
+    const buildInitialData = () => ({
+      incident_id: incidentId,
+      description: description || null,
+      location: locationText || null,
+      geo_location: geoLocation || null,
+      user_details: {
+        name: user?.full_name || null,
+        phone: user?.phone || null,
+        address: locationText || null,
+      },
+    });
 
-    const initializeWebSocket = async () => {
+    const scheduleReconnect = () => {
+      if (isCancelled || manualCloseRef.current || isCompleteRef.current) return;
+      reconnectAttemptsRef.current += 1;
+      const delayMs = Math.min(1000 * 2 ** (reconnectAttemptsRef.current - 1), 10000);
+      clearTimeout(reconnectTimerRef.current);
+      reconnectTimerRef.current = setTimeout(() => {
+        connectSocket(true);
+      }, delayMs);
+    };
+
+    const attachSocketHandlers = (ws, shouldResume) => {
+      wsRef.current = ws;
+
+      ws.onopen = () => {
+        setIsConnected(true);
+        reconnectAttemptsRef.current = 0;
+        const payload = shouldResume && hasStartedRef.current
+          ? {
+              type: "resume_session",
+              incident_id: incidentId,
+              tenant_id: user?.tenant_id,
+              user_id: user?.user_id,
+              use_case: useCase,
+              initial_data: buildInitialData(),
+            }
+          : {
+              type: "start",
+              incident_id: incidentId,
+              tenant_id: user?.tenant_id,
+              user_id: user?.user_id,
+              use_case: useCase,
+              initial_data: buildInitialData(),
+            };
+
+        hasStartedRef.current = true;
+        ws.send(JSON.stringify(payload));
+      };
+
+      ws.onmessage = (event) => {
+        try {
+          const response = JSON.parse(event.data);
+          handleAgentMessage(response);
+        } catch {
+          setIsTyping(false);
+        }
+      };
+
+      ws.onerror = (event) => {
+        console.error("[AgentChat][WebSocket] error", event);
+      };
+
+      ws.onclose = (event) => {
+        console.warn("[AgentChat][WebSocket] closed", {
+          code: event.code,
+          reason: event.reason,
+          wasClean: event.wasClean,
+        });
+        setIsConnected(false);
+        wsRef.current = null;
+        if (manualCloseRef.current || isCancelled || isCompleteRef.current) return;
+        scheduleReconnect();
+      };
+    };
+
+    const connectSocket = async (shouldResume = false) => {
+      const transportSessionId = `session_${Date.now()}`;
       try {
-        ws = await connectWebSocket(newSessionId);
+        setSessionId(transportSessionId);
+        const ws = await connectWebSocket(transportSessionId);
         if (isCancelled) {
           if (ws.readyState <= WebSocket.OPEN) {
             ws.close();
           }
           return;
         }
-
-        wsRef.current = ws;
-
-        ws.onopen = () => {
-          setIsConnected(true);
-          ws.send(
-            JSON.stringify({
-              type: "start",
-              incident_id: incidentId,
-              tenant_id: user?.tenant_id,
-              user_id: user?.user_id,
-              use_case: useCase,
-              initial_data: {
-                incident_id: incidentId,
-                description: description || null,
-                location: locationText || null,
-                geo_location: geoLocation || null,
-                user_details: {
-                  name: user?.full_name || null,
-                  phone: user?.phone || null,
-                  address: locationText || null,
-                },
-              },
-            }),
-          );
-        };
-
-        ws.onmessage = (event) => {
-          try {
-            const response = JSON.parse(event.data);
-            handleAgentMessage(response);
-          } catch {
-            setIsTyping(false);
-          }
-        };
-
-        ws.onerror = () => {};
-
-        ws.onclose = () => {
-          setIsConnected(false);
-        };
+        attachSocketHandlers(ws, shouldResume);
       } catch (error) {
         if (isCancelled) return;
         setIsConnected(false);
-        setMessages((prev) => [
-          ...prev,
-          {
-            id: `msg_${Date.now()}`,
-            role: "agent",
-            content: error.message || "Your session expired. Please sign in again.",
-            timestamp: new Date().toISOString(),
-          },
-        ]);
+        console.error("[AgentChat][WebSocket] connect failed", error);
+        scheduleReconnect();
       }
     };
 
-    initializeWebSocket();
+    manualCloseRef.current = false;
+    connectSocket(false);
 
     return () => {
       isCancelled = true;
-      if (ws && ws.readyState <= WebSocket.OPEN) {
-        ws.close();
+      manualCloseRef.current = true;
+      clearTimeout(reconnectTimerRef.current);
+      if (wsRef.current && wsRef.current.readyState <= WebSocket.OPEN) {
+        wsRef.current.close();
       }
     };
   }, [
@@ -126,6 +164,9 @@ const AgentChat = () => {
     }
 
     if (response.type === "agent_message") {
+      if (response.session_id && response.session_id !== sessionId) {
+        setSessionId(response.session_id);
+      }
       setIsTyping(false);
       if (response.action === "open_existing_incident") {
         const agentMessage = {

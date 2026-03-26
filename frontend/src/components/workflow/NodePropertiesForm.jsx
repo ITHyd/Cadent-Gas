@@ -65,6 +65,31 @@ const parseTerm = (str) => {
   return { type: 'variable', value: str };
 };
 
+const parseScoreWorkflow = (calc) => {
+  if (!calc) return null;
+  const lines = calc
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean);
+  if (lines.length < 2) return null;
+
+  const rawMatch = lines[0].match(/^([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.+)$/);
+  const normMatch = lines[1].match(
+    /^([A-Za-z_][A-Za-z0-9_]*)\s*=\s*round\(\(\s*([A-Za-z_][A-Za-z0-9_]*)\s*\/\s*(\d+)\s*\),\s*3\)\s*if\s*\d+\s*else\s*0$/
+  );
+  if (!rawMatch || !normMatch) return null;
+  if (rawMatch[1] !== normMatch[2]) return null;
+
+  const sourceScoreVars = [...lines[0].matchAll(/([A-Za-z_][A-Za-z0-9_]*_score)\b/g)].map((m) => m[1]);
+
+  return {
+    rawVariable: rawMatch[1],
+    normalizedVariable: normMatch[1],
+    maxScore: Number(normMatch[3]),
+    sourceScoreVars,
+  };
+};
+
 /**
  * Build a calculation string from structured terms.
  */
@@ -89,9 +114,25 @@ const buildCalculation = (resultVar, operation, terms) => {
 
 const NodePropertiesForm = ({ node, onChange, onDelete, allNodes = [] }) => {
   const [data, setData] = useState(node?.data || {});
+  const initialParsedCalc = parseCalculation(node?.data?.calculation);
+  const [calcMode, setCalcMode] = useState(
+    node?.data?._calc_mode || (initialParsedCalc ? 'visual' : (node?.data?.calculation ? 'custom' : 'visual'))
+  );
+  const [operation, setOperation] = useState(
+    node?.data?._calc_operation || initialParsedCalc?.operation || 'min'
+  );
+  const [terms, setTerms] = useState(
+    node?.data?._calc_terms || initialParsedCalc?.terms || [{ type: 'variable', value: 'total_score' }, { type: 'constant', value: 100 }]
+  );
 
   useEffect(() => {
     setData(node?.data || {});
+    const parsed = parseCalculation(node?.data?.calculation);
+    setCalcMode(node?.data?._calc_mode || (parsed ? 'visual' : (node?.data?.calculation ? 'custom' : 'visual')));
+    setOperation(node?.data?._calc_operation || parsed?.operation || 'min');
+    setTerms(
+      node?.data?._calc_terms || parsed?.terms || [{ type: 'variable', value: 'total_score' }, { type: 'constant', value: 100 }]
+    );
   }, [node]);
 
   /* ── Scored questions discovery (used by CALCULATE form) ── */
@@ -117,6 +158,20 @@ const NodePropertiesForm = ({ node, onChange, onDelete, allNodes = [] }) => {
           scoreVar: `${n.data.variable || n.id}_score`,
         };
       });
+  }, [allNodes]);
+
+  const availableVars = useMemo(() => {
+    const vars = [{ value: 'total_score', label: 'total_score (accumulated)' }];
+    allNodes.forEach(n => {
+      if (n.type !== 'QUESTION') return;
+      const v = n.data?.variable || n.id;
+      vars.push({ value: v, label: v });
+      const opts = n.data?.options || [];
+      if (opts.some(o => typeof o === 'object' && o !== null && o.score !== undefined)) {
+        vars.push({ value: `${v}_score`, label: `${v}_score (points)` });
+      }
+    });
+    return vars;
   }, [allNodes]);
 
   if (!node) {
@@ -323,16 +378,8 @@ const NodePropertiesForm = ({ node, onChange, onDelete, allNodes = [] }) => {
   /* ═══════════════ CALCULATE FORM (Enhanced) ═══════════════ */
   const renderCalculateForm = () => {
     const parsed = parseCalculation(data.calculation);
+    const scoreWorkflow = parseScoreWorkflow(data.calculation);
     const resultVar = data.result_variable || parsed?.resultVar || 'risk_score';
-
-    // Structured terms state
-    const [calcMode, setCalcMode] = useState(data._calc_mode || (parsed ? 'visual' : (data.calculation ? 'custom' : 'visual')));
-    const [operation, setOperation] = useState(
-      data._calc_operation || parsed?.operation || 'min'
-    );
-    const [terms, setTerms] = useState(
-      data._calc_terms || parsed?.terms || [{ type: 'variable', value: 'total_score' }, { type: 'constant', value: 100 }]
-    );
 
     const updateCalc = (newOp, newTerms, newResultVar) => {
       const op = newOp ?? operation;
@@ -374,23 +421,133 @@ const NodePropertiesForm = ({ node, onChange, onDelete, allNodes = [] }) => {
       updateCalc(operation, newTerms, resultVar);
     };
 
-    // Available variables from question nodes
-    const availableVars = useMemo(() => {
-      const vars = [{ value: 'total_score', label: 'total_score (accumulated)' }];
-      allNodes.forEach(n => {
-        if (n.type !== 'QUESTION') return;
-        const v = n.data?.variable || n.id;
-        vars.push({ value: v, label: v });
-        const opts = n.data?.options || [];
-        if (opts.some(o => typeof o === 'object' && o !== null && o.score !== undefined)) {
-          vars.push({ value: `${v}_score`, label: `${v}_score (points)` });
-        }
-      });
-      return vars;
-    }, [allNodes]);
-
     // Live formula preview
     const formulaPreview = buildCalculation(resultVar, operation, terms);
+
+    if (scoreWorkflow) {
+      return (
+        <>
+          <div style={styles.formGroup}>
+            <label style={styles.label}>Calculation Type</label>
+            <div style={{
+              padding: '12px 14px',
+              border: '1px solid #c7d2fe',
+              borderRadius: '10px',
+              background: 'linear-gradient(180deg, #f8faff 0%, #eef2ff 100%)',
+            }}>
+              <div style={{ fontSize: '13px', fontWeight: '700', color: '#3730a3', marginBottom: '4px' }}>
+                Score Normalization
+              </div>
+              <div style={{ fontSize: '12px', color: '#4b5563', lineHeight: '1.5' }}>
+                This node totals the question scores and converts them into a normalized value used by the final risk switch.
+              </div>
+            </div>
+          </div>
+
+          <div style={{
+            display: 'grid',
+            gridTemplateColumns: '1fr 1fr',
+            gap: '10px',
+            marginBottom: '16px',
+          }}>
+            <div style={{
+              padding: '12px',
+              border: '1px solid #e5e7eb',
+              borderRadius: '10px',
+              backgroundColor: '#ffffff',
+            }}>
+              <div style={{ fontSize: '11px', fontWeight: '700', color: '#6b7280', textTransform: 'uppercase', marginBottom: '6px' }}>
+                Raw Score
+              </div>
+              <code style={{ fontSize: '13px', color: '#111827', fontWeight: '600' }}>
+                {scoreWorkflow.rawVariable}
+              </code>
+            </div>
+
+            <div style={{
+              padding: '12px',
+              border: '1px solid #e5e7eb',
+              borderRadius: '10px',
+              backgroundColor: '#ffffff',
+            }}>
+              <div style={{ fontSize: '11px', fontWeight: '700', color: '#6b7280', textTransform: 'uppercase', marginBottom: '6px' }}>
+                Output Variable
+              </div>
+              <code style={{ fontSize: '13px', color: '#111827', fontWeight: '600' }}>
+                {scoreWorkflow.normalizedVariable}
+              </code>
+            </div>
+          </div>
+
+          <div style={styles.formGroup}>
+            <label style={styles.label}>Inputs Used</label>
+            <div style={{
+              padding: '12px',
+              border: '1px solid #dbeafe',
+              borderRadius: '10px',
+              backgroundColor: '#f8fbff',
+            }}>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginBottom: '10px' }}>
+                {scoreWorkflow.sourceScoreVars.map((scoreVar) => (
+                  <code
+                    key={scoreVar}
+                    style={{
+                      fontSize: '12px',
+                      padding: '4px 8px',
+                      borderRadius: '999px',
+                      backgroundColor: '#e0f2fe',
+                      color: '#075985',
+                      border: '1px solid #bae6fd',
+                    }}
+                  >
+                    {scoreVar}
+                  </code>
+                ))}
+              </div>
+              <div style={{
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+                paddingTop: '10px',
+                borderTop: '1px solid #dbeafe',
+                fontSize: '12px',
+                color: '#374151',
+              }}>
+                <span>Maximum possible score</span>
+                <strong style={{ color: '#0f172a' }}>{scoreWorkflow.maxScore}</strong>
+              </div>
+            </div>
+            <div style={styles.helpText}>
+              The next switch uses the normalized score to route to `Emergency`, `Monitor`, or `Guidance`.
+            </div>
+          </div>
+
+          <div style={styles.formGroup}>
+            <label style={styles.label}>Generated Formula</label>
+            <textarea
+              style={{ ...styles.textarea, fontFamily: 'monospace', minHeight: '110px', backgroundColor: '#f9fafb' }}
+              value={data.calculation || ''}
+              onChange={(e) => handleChange('calculation', e.target.value)}
+              rows={5}
+            />
+            <div style={styles.helpText}>
+              Advanced view of the exact backend calculation.
+            </div>
+          </div>
+
+          <div style={styles.formGroup}>
+            <label style={styles.label}>Stored Result Variable</label>
+            <input
+              type="text"
+              style={styles.input}
+              value={data.result_variable || ''}
+              onChange={(e) => handleChange('result_variable', e.target.value)}
+              placeholder={scoreWorkflow.normalizedVariable}
+            />
+          </div>
+        </>
+      );
+    }
 
     return (
       <>
@@ -813,7 +970,6 @@ const NodePropertiesForm = ({ node, onChange, onDelete, allNodes = [] }) => {
           placeholder="Select outcome"
           options={[
             { value: 'emergency_dispatch', label: '🚨 Emergency Dispatch' },
-            { value: 'schedule_engineer', label: '📅 Schedule Engineer' },
             { value: 'monitor', label: '👁️ Monitor' },
             { value: 'close_with_guidance', label: '✅ Close with Guidance' },
           ]}
@@ -1259,6 +1415,10 @@ const NodePropertiesForm = ({ node, onChange, onDelete, allNodes = [] }) => {
 
   const renderSubWorkflowForm = () => (
     <>
+      {(() => {
+        const hasFixedWorkflowId = Boolean((data.workflow_id || '').trim());
+        return (
+          <>
       <div style={styles.formGroup}>
         <label style={styles.label}>Label</label>
         <input
@@ -1283,29 +1443,33 @@ const NodePropertiesForm = ({ node, onChange, onDelete, allNodes = [] }) => {
         <div style={styles.helpText}>Exact workflow to invoke. Use this when the target is fixed.</div>
       </div>
 
-      <div style={styles.formGroup}>
-        <label style={styles.label}>Workflow ID Template</label>
-        <input
-          type="text"
-          style={styles.input}
-          value={data.workflow_id_template || ''}
-          onChange={(e) => handleChange('workflow_id_template', e.target.value)}
-          placeholder="{{manufacturer_workflow_id}}"
-        />
-        <div style={styles.helpText}>Optional template using variables from earlier questions.</div>
-      </div>
+      {!hasFixedWorkflowId && (
+        <>
+          <div style={styles.formGroup}>
+            <label style={styles.label}>Workflow ID Template</label>
+            <input
+              type="text"
+              style={styles.input}
+              value={data.workflow_id_template || ''}
+              onChange={(e) => handleChange('workflow_id_template', e.target.value)}
+              placeholder="{{manufacturer_workflow_id}}"
+            />
+            <div style={styles.helpText}>Optional template using variables from earlier questions.</div>
+          </div>
 
-      <div style={styles.formGroup}>
-        <label style={styles.label}>Use Case Fallback</label>
-        <input
-          type="text"
-          style={styles.input}
-          value={data.use_case || ''}
-          onChange={(e) => handleChange('use_case', e.target.value)}
-          placeholder="co_alarm_fireangel"
-        />
-        <div style={styles.helpText}>Optional fallback if you want the engine to resolve by use case instead of workflow ID.</div>
-      </div>
+          <div style={styles.formGroup}>
+            <label style={styles.label}>Use Case Fallback</label>
+            <input
+              type="text"
+              style={styles.input}
+              value={data.use_case || ''}
+              onChange={(e) => handleChange('use_case', e.target.value)}
+              placeholder="co_alarm_fireangel"
+            />
+            <div style={styles.helpText}>Optional fallback if you want the engine to resolve by use case instead of workflow ID.</div>
+          </div>
+        </>
+      )}
 
       <div style={styles.formGroup}>
         <label style={styles.label}>Result Prefix</label>
@@ -1318,6 +1482,9 @@ const NodePropertiesForm = ({ node, onChange, onDelete, allNodes = [] }) => {
         />
         <div style={styles.helpText}>Stores returned values like `manufacturer_triage_outcome` and `manufacturer_triage_message`.</div>
       </div>
+          </>
+        );
+      })()}
     </>
   );
 

@@ -46,6 +46,50 @@ class AgentOrchestrator:
         self.incident_service = IncidentService()
         self.active_sessions: Dict[str, Dict[str, Any]] = {}
 
+    def _create_session_record(
+        self,
+        incident_id: str,
+        tenant_id: str,
+        user_id: str,
+        initial_data: Dict[str, Any],
+    ) -> str:
+        session_id = str(uuid.uuid4())
+        reference_id = normalize_demo_reference_id(initial_data.get("reference_id"))
+        structured_data = {}
+        if reference_id:
+            structured_data["reference_id"] = reference_id
+
+        self.active_sessions[session_id] = {
+            "session_id": session_id,
+            "incident_id": incident_id,
+            "tenant_id": tenant_id,
+            "user_id": user_id,
+            "user_details": initial_data.get("user_details", {}),
+            "reported_by_staff_id": initial_data.get("reported_by_staff_id"),
+            "initial_data": initial_data,
+            "execution_id": None,
+            "workflow_id": None,
+            "workflow_version": None,
+            "use_case": initial_data.get("use_case") or None,
+            "completed": False,
+            "mode": SessionMode.IDLE,
+            "paused_workflows": [],
+            "pending_switch": None,
+            "pending_reference_match": None,
+            "last_question_data": None,
+            "validation_notice_sent": False,
+            "reference_id": reference_id,
+            "awaiting_reference_id": not bool(reference_id),
+            "switch_count": 0,
+            "switch_timestamps": [],
+            "consecutive_unclear_count": 0,
+            "mode_history": [],
+            "conversation_history": [],
+            "structured_data": structured_data,
+            "created_at": datetime.utcnow(),
+        }
+        return session_id
+
     # ╔══════════════════════════════════════════════════════════════════════╗
     # ║  SESSION LIFECYCLE                                                  ║
     # ╚══════════════════════════════════════════════════════════════════════╝
@@ -60,49 +104,8 @@ class AgentOrchestrator:
     ) -> Dict[str, Any]:
         """Create a session. Workflow selection/execution starts from first user message."""
         _ = workflow  # Kept for compatibility with existing API callers.
-
-        session_id = str(uuid.uuid4())
-        reference_id = normalize_demo_reference_id(
-            initial_data.get("reference_id")
-        )
-        structured_data = {}
-        if reference_id:
-            structured_data["reference_id"] = reference_id
-
-        self.active_sessions[session_id] = {
-            "session_id": session_id,
-            "incident_id": incident_id,
-            "tenant_id": tenant_id,
-            "user_id": user_id,
-            "user_details": initial_data.get("user_details", {}),
-            "reported_by_staff_id": initial_data.get("reported_by_staff_id"),
-            "initial_data": initial_data,
-            # Workflow state
-            "execution_id": None,
-            "workflow_id": None,
-            "workflow_version": None,
-            "use_case": initial_data.get("use_case") or None,
-            "completed": False,
-            # Mode management
-            "mode": SessionMode.IDLE,
-            "paused_workflows": [],       # list of snapshot dicts
-            "pending_switch": None,        # {use_case, confidence, detail}
-            "pending_reference_match": None,
-            "last_question_data": None,    # last question+options for reprompt
-            "validation_notice_sent": False,
-            "reference_id": reference_id,
-            "awaiting_reference_id": not bool(reference_id),
-            # Stability controls
-            "switch_count": 0,
-            "switch_timestamps": [],       # list of time.time() floats
-            "consecutive_unclear_count": 0,
-            # Audit trail
-            "mode_history": [],            # [{from, to, reason, timestamp}]
-            # History
-            "conversation_history": [],
-            "structured_data": structured_data,
-            "created_at": datetime.utcnow(),
-        }
+        session_id = self._create_session_record(incident_id, tenant_id, user_id, initial_data)
+        reference_id = self.active_sessions[session_id]["reference_id"]
 
         # Check if the user has paused incidents they can resume
         paused = self.incident_service.get_paused_incidents(user_id, tenant_id)
@@ -166,6 +169,34 @@ class AgentOrchestrator:
             "action": action,
             "data": data,
         }
+
+    async def reconnect_session(
+        self,
+        incident_id: str,
+        workflow: Workflow,
+        tenant_id: str,
+        user_id: str,
+        initial_data: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        """Create a fresh session and auto-resume a paused incident when possible."""
+        _ = workflow  # Maintains parity with current call sites.
+
+        session_id = self._create_session_record(incident_id, tenant_id, user_id, initial_data)
+        incident = self.incident_service.get_incident(incident_id) if incident_id else None
+
+        if incident and incident.workflow_snapshot:
+            logger.info(f"[{session_id}] Reconnecting paused incident {incident_id}")
+            return await self.resume_incident(session_id, incident_id)
+
+        logger.info(f"[{session_id}] No paused snapshot for incident {incident_id}; starting fresh session")
+        self.active_sessions.pop(session_id, None)
+        return await self.start_session(
+            incident_id=incident_id,
+            workflow=workflow,
+            tenant_id=tenant_id,
+            user_id=user_id,
+            initial_data=initial_data,
+        )
 
     # ╔══════════════════════════════════════════════════════════════════════╗
     # ║  MAIN DECISION TREE                                                 ║
@@ -1579,14 +1610,6 @@ class AgentOrchestrator:
             logger.warning(f"Enhanced message is empty, using original: {message}")
             enhanced_message = message
 
-        if action == "question" and not session.get("validation_notice_sent"):
-            enhanced_message = (
-                "Safety validation is active. I’m checking each answer against our verified incident KBs "
-                "and risk rules as we go.\n\n"
-                f"{enhanced_message}"
-            )
-            session["validation_notice_sent"] = True
-
         self._add_to_history(session_id, "agent", {"message": enhanced_message, "action": action, "data": data})
         result = {
             "session_id": session_id,
@@ -1630,15 +1653,18 @@ class AgentOrchestrator:
         kb_result = decision_support.get("kb_result")
         risk_result = decision_support.get("risk_result")
         validated_outcome = decision_support.get("validated_outcome")
-        final_outcome = self._select_outcome(workflow_outcome, validated_outcome)
+        # The workflow's own decision is the source of truth. Keep KB/risk
+        # validation as supporting metadata only and do not let it override the
+        # workflow outcome.
+        final_outcome = workflow_outcome or validated_outcome
         outcome_enum = self._map_outcome(final_outcome)
 
-        if risk_result:
-            risk_score = risk_result["final_risk_score"]
-            confidence_score = risk_result["confidence_score"]
-        elif outcome_enum:
+        if outcome_enum:
             risk_score = self._risk_from_outcome(outcome_enum)
             confidence_score = 1.0
+        elif risk_result:
+            risk_score = risk_result["final_risk_score"]
+            confidence_score = risk_result["confidence_score"]
         else:
             risk_score = 0.5
             confidence_score = 0.5
@@ -1671,7 +1697,7 @@ class AgentOrchestrator:
             "kb_adjusted_score": round(risk_result.get("kb_adjusted_risk_score", 0), 3) if risk_result else round(risk_score, 3),
             "final_score": round(risk_score, 3),
             "confidence": round(confidence_score, 3),
-            "decision": validated_outcome or final_outcome,
+            "decision": final_outcome,
             "risk_factors": risk_result.get("risk_factors", {}) if risk_result else {},
         }
         structured_data["_decision_trace"] = {
@@ -1968,14 +1994,19 @@ class AgentOrchestrator:
 
         outcome_messages = {
             "emergency_dispatch": (
-                "EMERGENCY: Response Activated\n\n"
-                "For your safety, please:\n"
-                "- Evacuate the building immediately\n"
-                "- Do not use any electrical switches or phones\n"
-                "- Call emergency services (999) if you haven't already\n"
-                "- Wait at a safe distance\n\n"
-                "Emergency services have been notified and are on their way. "
-                f"Your incident ID is: {incident_id}"
+                "Incident Logged - Emergency Response Required\n\n"
+                "Thank you for reporting this. Based on your responses, this incident needs urgent attention.\n\n"
+                "What happens next:\n"
+                "- Your case has been marked as high priority\n"
+                "- Emergency response is being arranged\n"
+                "- Our team will treat this as urgent\n\n"
+                f"Reference ID: {reference_id}\n\n"
+                "What you should do now:\n"
+                "- Stay out of the property if you are already outside\n"
+                "- Open doors and windows if this can be done safely\n"
+                "- Do not use gas appliances\n"
+                "- Call 999 immediately if anyone is unwell\n"
+                "- Contact us again straight away if conditions worsen"
             ),
             "schedule_engineer": (
                 "Incident Logged - Engineer Dispatch Required\n\n"
@@ -1985,37 +2016,40 @@ class AgentOrchestrator:
                 "- A field engineer will be assigned shortly\n"
                 "- You'll receive a call to schedule the visit\n"
                 "- Expected response time: Within 4 hours\n\n"
-                f"Your incident has been logged. Reference ID: {reference_id}\n\n"
-                "In the meantime:\n"
-                "- Ensure good ventilation\n"
-                "- Avoid using electrical appliances near the smell\n"
-                "- If the situation worsens, call emergency services immediately"
+                f"Reference ID: {reference_id}\n\n"
+                "What you should do now:\n"
+                "- Keep the area well ventilated\n"
+                "- Avoid using appliances if you are concerned they may be involved\n"
+                "- Contact us again straight away if the situation worsens"
             ),
             "monitor": (
                 "Incident Logged - Monitoring Required\n\n"
-                "Thank you for reporting this. We've logged your incident and will monitor the situation.\n\n"
+                "Thank you for reporting this. We've logged your incident and will continue to monitor the situation.\n\n"
                 "What happens next:\n"
                 "- Your report will be reviewed by our team\n"
                 "- We may contact you for additional information\n"
-                "- If needed, we'll schedule an inspection\n\n"
-                f"Your incident has been logged. Reference ID: {reference_id}\n\n"
-                "Safety tips:\n"
-                "- Keep the area well-ventilated\n"
-                "- Monitor for any changes\n"
-                "- Contact us immediately if the situation worsens"
+                "- If needed, we'll arrange a follow-up inspection\n\n"
+                f"Reference ID: {reference_id}\n\n"
+                "What you should do now:\n"
+                "- Keep the area well ventilated\n"
+                "- Monitor for any changes in the alarm or symptoms\n"
+                "- Avoid using appliances if you are concerned they may be involved\n"
+                "- Contact us again straight away if the situation worsens"
             ),
             "close_with_guidance": (
                 "Incident Logged - Safety Guidance Provided\n\n"
                 "Thank you for reporting this concern. Based on your responses, "
-                "this appears to be a low-risk situation that can be managed with proper precautions.\n\n"
-                "ℹ️ This appears to be a false alarm.\n\n"
-                f"Your incident has been logged for our records. Reference ID: {reference_id}\n\n"
-                "Safety recommendations:\n"
-                "- Ensure all areas are well-ventilated\n"
-                "- Check that all gas appliances are turned off when not in use\n"
-                "- If you notice any changes or the smell persists, contact us immediately\n"
-                "- Consider scheduling a routine safety inspection\n\n"
-                "You can view this report in your dashboard at any time."
+                "this appears to be a low-risk situation that can be managed with guidance.\n\n"
+                "What happens next:\n"
+                "- Your report has been logged for our records\n"
+                "- No emergency response is being arranged at this time\n"
+                "- You can contact us again if anything changes\n\n"
+                f"Reference ID: {reference_id}\n\n"
+                "What you should do now:\n"
+                "- Keep the area well ventilated\n"
+                "- Follow the alarm or appliance guidance given during this chat\n"
+                "- Replace or service the alarm if it shows battery, fault, or end-of-life warnings\n"
+                "- Contact us again if the alarm pattern changes or anyone feels unwell"
             ),
             "false_report": (
                 "Incident Logged\n\n"

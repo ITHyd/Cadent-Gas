@@ -1,6 +1,38 @@
 import { Handle, Position } from 'reactflow';
 
+const parseScoreWorkflow = (calc) => {
+  if (!calc) return null;
+  const lines = calc
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean);
+  if (lines.length < 2) return null;
+
+  const rawMatch = lines[0].match(/^([A-Za-z_][A-Za-z0-9_]*)\s*=/);
+  const normMatch = lines[1].match(
+    /^([A-Za-z_][A-Za-z0-9_]*)\s*=\s*round\(\(\s*([A-Za-z_][A-Za-z0-9_]*)\s*\/\s*(\d+)\s*\),\s*3\)\s*if\s*\d+\s*else\s*0$/
+  );
+  if (!rawMatch || !normMatch) return null;
+  if (rawMatch[1] !== normMatch[2]) return null;
+
+  const inputs = [...lines[0].matchAll(/([A-Za-z_][A-Za-z0-9_]*_score)\b/g)].map((m) => m[1]);
+  return {
+    rawVariable: rawMatch[1],
+    normalizedVariable: normMatch[1],
+    maxScore: Number(normMatch[3]),
+    inputCount: inputs.length,
+  };
+};
+
 const CalculateNode = ({ data, selected }) => {
+  const scoreWorkflow = parseScoreWorkflow(data.calculation);
+  const primaryText = scoreWorkflow
+    ? `Normalize ${scoreWorkflow.rawVariable}`
+    : (data.calculation || 'Click to edit');
+  const secondaryText = scoreWorkflow
+    ? `${scoreWorkflow.inputCount} inputs • max ${scoreWorkflow.maxScore}`
+    : (data.result_variable ? `result: ${data.result_variable}` : '');
+
   return (
     <div
       style={{
@@ -40,22 +72,22 @@ const CalculateNode = ({ data, selected }) => {
           wordBreak: 'break-word',
         }}
       >
-        {data.calculation || 'Click to edit'}
+        {primaryText}
       </div>
 
-      {data.result_variable && (
+      {secondaryText && (
         <div
           style={{
             fontSize: '8px',
             color: '#9ca3af',
-            fontFamily: 'monospace',
+            fontFamily: scoreWorkflow ? 'inherit' : 'monospace',
             marginBottom: '3px',
             overflow: 'hidden',
             textOverflow: 'ellipsis',
             whiteSpace: 'nowrap',
           }}
         >
-          result: {data.result_variable}
+          {secondaryText}
         </div>
       )}
 

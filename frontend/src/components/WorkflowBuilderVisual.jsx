@@ -2,9 +2,12 @@ import { useCallback, useEffect, useState, useRef, Fragment, useMemo } from "rea
 import { useNavigate } from "react-router-dom";
 import ReactFlow, {
   Background,
+  BaseEdge,
   Controls,
+  EdgeLabelRenderer,
   MiniMap,
   addEdge,
+  getSmoothStepPath,
   useNodesState,
   useEdgesState,
   MarkerType,
@@ -62,6 +65,102 @@ const nodeTypes = {
   DATA_FETCH: DataFetchNode,
   SUB_WORKFLOW: SubWorkflowNode,
   INTAKE: IntakeNode,
+};
+
+const VerticalSwitchEdge = ({
+  id,
+  sourceX,
+  sourceY,
+  targetX,
+  targetY,
+  sourcePosition,
+  targetPosition,
+  markerEnd,
+  style,
+  label,
+}) => {
+  const [edgePath] = getSmoothStepPath({
+    sourceX,
+    sourceY,
+    sourcePosition,
+    targetX,
+    targetY,
+    targetPosition,
+  });
+  const beforeTarget = 72;
+  const aboveLink = 18;
+  const sideNudge = 12;
+  let labelX = targetX - beforeTarget;
+  let labelY = targetY - aboveLink;
+
+  if (typeof document !== "undefined") {
+    try {
+      const svgPath = document.createElementNS("http://www.w3.org/2000/svg", "path");
+      svgPath.setAttribute("d", edgePath);
+      const totalLength = svgPath.getTotalLength();
+      const anchorLength = Math.max(0, totalLength - beforeTarget);
+      const anchor = svgPath.getPointAtLength(anchorLength);
+      const prev = svgPath.getPointAtLength(Math.max(0, anchorLength - 1));
+      const tangentX = anchor.x - prev.x;
+      const tangentY = anchor.y - prev.y;
+      const isMostlyHorizontal = Math.abs(tangentX) >= Math.abs(tangentY);
+
+      if (isMostlyHorizontal) {
+        labelX = anchor.x;
+        labelY = anchor.y - aboveLink;
+      } else {
+        labelX = anchor.x + sideNudge;
+        labelY = anchor.y - aboveLink;
+      }
+    } catch (_) {
+      if (targetPosition === "right") {
+        labelX = targetX + beforeTarget;
+        labelY = targetY - aboveLink;
+      } else if (targetPosition === "top") {
+        labelX = targetX + sideNudge;
+        labelY = targetY - beforeTarget;
+      } else if (targetPosition === "bottom") {
+        labelX = targetX + sideNudge;
+        labelY = targetY + beforeTarget - aboveLink;
+      }
+    }
+  }
+
+  return (
+    <>
+      <BaseEdge id={id} path={edgePath} markerEnd={markerEnd} style={style} />
+      {label ? (
+        <EdgeLabelRenderer>
+          <div
+            className="nodrag nopan"
+            style={{
+              position: "absolute",
+              transform: `translate(-50%, -50%) translate(${labelX}px, ${labelY}px)`,
+              pointerEvents: "none",
+              background: "rgba(255,255,255,0.96)",
+              border: "1px solid #e5e7eb",
+              borderRadius: "999px",
+              padding: "2px 8px",
+              color: "#374151",
+              fontSize: "11px",
+              lineHeight: 1.2,
+              whiteSpace: "nowrap",
+              maxWidth: "160px",
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              boxShadow: "0 1px 2px rgba(15, 23, 42, 0.08)",
+            }}
+          >
+            {label}
+          </div>
+        </EdgeLabelRenderer>
+      ) : null}
+    </>
+  );
+};
+
+const edgeTypes = {
+  verticalSwitch: VerticalSwitchEdge,
 };
 
 const NODE_TYPES = [
@@ -366,78 +465,6 @@ const toReactFlowNodes = (backendNodes = []) =>
     };
   });
 
-const INTAKE_REPORTER_NODE_ID = "__intake_reporter_type";
-const INTAKE_PHONE_NODE_ID = "__intake_phone_lookup";
-
-const buildIntakeDisplayFlow = (flowNodes = [], flowEdges = [], actualStartNodeId = "") => {
-  const actualStartNode = flowNodes.find((node) => node.id === actualStartNodeId) || flowNodes[0];
-  if (!actualStartNode) {
-    return {
-      visualNodes: flowNodes,
-      visualEdges: flowEdges,
-      visualStartNodeId: actualStartNodeId,
-    };
-  }
-
-  const baselineY = actualStartNode.position?.y || 80;
-  const startX = actualStartNode.position?.x || 0;
-  const reporterNode = {
-    id: INTAKE_REPORTER_NODE_ID,
-    type: "INTAKE",
-    position: { x: startX - 520, y: baselineY },
-    draggable: false,
-    selectable: false,
-    connectable: false,
-    data: {
-      icon: "1",
-      title: "Reporter Type",
-      description: "Identify who is reporting the incident before workflow triage begins.",
-      accent: "#8DE971",
-    },
-  };
-  const phoneLookupNode = {
-    id: INTAKE_PHONE_NODE_ID,
-    type: "INTAKE",
-    position: { x: startX - 260, y: baselineY },
-    draggable: false,
-    selectable: false,
-    connectable: false,
-    data: {
-      icon: "2",
-      title: "Phone Lookup",
-      description: "Capture or confirm the customer phone details before the workflow questions.",
-      accent: "#bfdbfe",
-    },
-  };
-
-  const intakeEdges = [
-    {
-      id: "edge___intake_reporter_to_phone",
-      source: INTAKE_REPORTER_NODE_ID,
-      target: INTAKE_PHONE_NODE_ID,
-      type: "smoothstep",
-      animated: true,
-      style: { stroke: "#8DE971", strokeWidth: 2, strokeDasharray: "6 4" },
-      markerEnd: { type: "arrowclosed", width: 16, height: 16 },
-    },
-    {
-      id: `edge___intake_phone_to_${actualStartNode.id}`,
-      source: INTAKE_PHONE_NODE_ID,
-      target: actualStartNode.id,
-      type: "smoothstep",
-      animated: true,
-      style: { stroke: "#93c5fd", strokeWidth: 2, strokeDasharray: "6 4" },
-      markerEnd: { type: "arrowclosed", width: 16, height: 16 },
-    },
-  ];
-
-  return {
-    visualNodes: [reporterNode, phoneLookupNode, ...flowNodes],
-    visualEdges: [...intakeEdges, ...flowEdges],
-    visualStartNodeId: INTAKE_REPORTER_NODE_ID,
-  };
-};
-
 /**
  * Detect groups from node data and build a map of group → node IDs.
  */
@@ -610,10 +637,16 @@ const autoLayoutNodes = (nodes, edges, startNodeId, force = false) => {
   });
 
   const positionMap = {};
+  const nodeById = {};
+  nodes.forEach((node) => {
+    nodeById[node.id] = node;
+  });
 
   // Tree-aware layout: compute subtree sizes so branches don't overlap
   const H_GAP = 250;
   const V_GAP = 100;
+  const SWITCH_V_GAP = 140;
+  const SWITCH_MAX_BRANCH_LEAVES = 5;
   // Cap how much vertical space a single branch can claim, so deep subtrees
   // don't push sibling branches (True/False) far apart
   const MAX_BRANCH_LEAVES = 3;
@@ -652,12 +685,16 @@ const autoLayoutNodes = (nodes, edges, startNodeId, force = false) => {
 
   // Assign positions: linear nodes (single child) don't consume extra vertical space
   const assignPositions = (id, level, yOffset) => {
+    const currentNode = nodeById[id];
     const children = childrenMap[id] || [];
     const size = subtreeSize[id] || 1;
+    const isSwitch = currentNode?.type === "SWITCH";
+    const branchGap = isSwitch ? SWITCH_V_GAP : V_GAP;
+    const maxBranchLeaves = isSwitch ? SWITCH_MAX_BRANCH_LEAVES : MAX_BRANCH_LEAVES;
 
     // Center this node within its allocated vertical band (capped)
-    const clampedSelf = Math.min(size, MAX_BRANCH_LEAVES * (children.length || 1));
-    const bandHeight = (clampedSelf - 1) * V_GAP;
+    const clampedSelf = Math.min(size, maxBranchLeaves * Math.max(children.length, 1));
+    const bandHeight = (clampedSelf - 1) * branchGap;
     positionMap[id] = {
       x: 60 + level * H_GAP,
       y: yOffset + bandHeight / 2,
@@ -672,8 +709,12 @@ const autoLayoutNodes = (nodes, edges, startNodeId, force = false) => {
       let childY = yOffset;
       for (const child of children) {
         assignPositions(child, level + 1, childY);
-        const clampedSize = Math.min(subtreeSize[child] || 1, MAX_BRANCH_LEAVES);
-        childY += clampedSize * V_GAP;
+        const childNode = nodeById[child];
+        const childIsSwitch = childNode?.type === "SWITCH";
+        const childBranchGap = childIsSwitch ? SWITCH_V_GAP : branchGap;
+        const childMaxBranchLeaves = childIsSwitch ? SWITCH_MAX_BRANCH_LEAVES : maxBranchLeaves;
+        const clampedSize = Math.min(subtreeSize[child] || 1, childMaxBranchLeaves);
+        childY += clampedSize * childBranchGap;
       }
     }
   };
@@ -706,7 +747,16 @@ const toReactFlowEdges = (backendEdges = [], backendNodes = []) => {
 
     // Hide manufacturer== conditions on SWITCH edges (group headers show the name)
     const rawLabel = edge.condition || getEdgeLabelForHandle(srcType, sh);
-    const label = (rawLabel && rawLabel.startsWith('manufacturer ==')) ? '' : rawLabel;
+    const isSwitchLabeledEdge = srcType === "SWITCH" && rawLabel;
+    let label = (rawLabel && rawLabel.startsWith('manufacturer ==')) ? '' : rawLabel;
+    if (isSwitchLabeledEdge && label) {
+      const match = label.match(/==\s*['"](.+?)['"]$/);
+      if (match?.[1]) {
+        label = match[1];
+      } else if (label.toLowerCase() === "default") {
+        label = "default";
+      }
+    }
 
     return {
       id: `edge_${index}_${edge.source}_${edge.target}`,
@@ -715,7 +765,7 @@ const toReactFlowEdges = (backendEdges = [], backendNodes = []) => {
       sourceHandle: sh,
       targetHandle: edge.target_handle || null,
       label,
-      type: "smoothstep",
+      type: srcType === "SWITCH" && label ? "verticalSwitch" : "smoothstep",
       animated: false,
       markerEnd: { type: MarkerType.ArrowClosed, width: 16, height: 16 },
     };
@@ -748,6 +798,21 @@ const findAvailablePosition = (basePosition, nodes) => {
   return { x: basePosition.x + 240, y: basePosition.y };
 };
 
+const parseScoreWorkflowDescription = (calc) => {
+  if (!calc) return null;
+  const lines = calc
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
+  if (lines.length < 2) return null;
+  const rawMatch = lines[0].match(/^([A-Za-z_][A-Za-z0-9_]*)\s*=/);
+  const normMatch = lines[1].match(
+    /^([A-Za-z_][A-Za-z0-9_]*)\s*=\s*round\(\(\s*([A-Za-z_][A-Za-z0-9_]*)\s*\/\s*(\d+)\s*\),\s*3\)\s*if\s*\d+\s*else\s*0$/
+  );
+  if (!rawMatch || !normMatch || rawMatch[1] !== normMatch[2]) return null;
+  return `Normalize ${rawMatch[1]} to ${normMatch[1]}`;
+};
+
 const getNodeDescription = (node) => {
   const d = node.data || {};
   switch (node.type) {
@@ -758,6 +823,8 @@ const getNodeDescription = (node) => {
     case "DECISION":
       return d.outcome?.replaceAll("_", " ") || "No outcome set";
     case "CALCULATE": {
+      const scoreDescription = parseScoreWorkflowDescription(d.calculation);
+      if (scoreDescription) return scoreDescription;
       if (d.result_variable && d._calc_operation && d._calc_terms?.length) {
         const op = d._calc_operation;
         const termNames = d._calc_terms.map(t => t.type === 'constant' ? t.value : t.value).join(
@@ -909,7 +976,7 @@ const WorkflowBuilderVisual = ({ workflow, tenantId, onClose }) => {
   // Detect groups and start with all manufacturer groups collapsed
   const detectedGroups = detectGroups(workflow?.nodes || []);
   const [collapsedGroups, setCollapsedGroups] = useState(
-    () => new Set(Object.keys(detectedGroups))
+    () => new Set()
   );
 
   const initialFlowNodes = toReactFlowNodes(workflow?.nodes || []);
@@ -1061,10 +1128,9 @@ const WorkflowBuilderVisual = ({ workflow, tenantId, onClose }) => {
     [nodes, openSubWorkflow],
   );
 
-  const { visualNodes, visualEdges, visualStartNodeId } = useMemo(
-    () => buildIntakeDisplayFlow(interactiveNodes, edges, startNode),
-    [interactiveNodes, edges, startNode],
-  );
+  const visualNodes = interactiveNodes;
+  const visualEdges = edges;
+  const visualStartNodeId = startNode;
 
   useEffect(() => {
     const backendNodes = workflow?.nodes || [];
@@ -1072,16 +1138,16 @@ const WorkflowBuilderVisual = ({ workflow, tenantId, onClose }) => {
     const flowNodes = toReactFlowNodes(backendNodes);
     const flowEdges = toReactFlowEdges(backendEdges, backendNodes);
 
-    // Detect groups and reset collapse state (all collapsed by default)
+    // Detect groups and reset collapse state (expanded by default)
     const groups = detectGroups(backendNodes);
     const groupNames = Object.keys(groups);
     if (groupNames.length > 0) {
-      setCollapsedGroups(new Set(groupNames));
+      setCollapsedGroups(new Set());
     }
 
     // Apply collapse before layout
     const { nodes: visNodes, edges: visEdges } = applyGroupCollapse(
-      flowNodes, flowEdges, groups, new Set(groupNames), backendEdges
+      flowNodes, flowEdges, groups, new Set(), backendEdges
     );
     const startId = workflow?.start_node || visNodes[0]?.id || "";
     const layoutedNodes = autoLayoutNodes(visNodes, visEdges, startId, true);
@@ -1096,11 +1162,7 @@ const WorkflowBuilderVisual = ({ workflow, tenantId, onClose }) => {
     setStatusMessage("");
     setError("");
     if (reactFlowInstance && layoutedNodes.length > 0) {
-      const visualFlow = buildIntakeDisplayFlow(layoutedNodes, visEdges, startId);
-      setTimeout(
-        () => zoomToStart(reactFlowInstance, visualFlow.visualNodes, visualFlow.visualStartNodeId || startId),
-        100,
-      );
+      setTimeout(() => zoomToStart(reactFlowInstance, layoutedNodes, startId), 100);
     }
   }, [workflow, setNodes, setEdges, reactFlowInstance, zoomToStart]);
 
@@ -1127,9 +1189,9 @@ const WorkflowBuilderVisual = ({ workflow, tenantId, onClose }) => {
             const flowEdges = toReactFlowEdges(bEdges, bNodes);
             const groups = detectGroups(bNodes);
             const groupNames = Object.keys(groups);
-            if (groupNames.length > 0) setCollapsedGroups(new Set(groupNames));
+            if (groupNames.length > 0) setCollapsedGroups(new Set());
             const { nodes: visN, edges: visE } = applyGroupCollapse(
-              flowNodes, flowEdges, groups, new Set(groupNames), bEdges
+              flowNodes, flowEdges, groups, new Set(), bEdges
             );
             const startId = activeData?.start_node || visN[0]?.id || "";
             const layoutedNodes = autoLayoutNodes(visN, visE, startId, true);
@@ -1141,11 +1203,7 @@ const WorkflowBuilderVisual = ({ workflow, tenantId, onClose }) => {
             setEdges(visE);
             setSelectedNode(null);
             if (reactFlowInstance && layoutedNodes.length > 0) {
-              const visualFlow = buildIntakeDisplayFlow(layoutedNodes, visE, startId);
-              setTimeout(
-                () => zoomToStart(reactFlowInstance, visualFlow.visualNodes, visualFlow.visualStartNodeId || startId),
-                100,
-              );
+              setTimeout(() => zoomToStart(reactFlowInstance, layoutedNodes, startId), 100);
             }
           } catch (_) {
             /* keep the version loaded from prop */
@@ -1181,6 +1239,16 @@ const WorkflowBuilderVisual = ({ workflow, tenantId, onClose }) => {
       });
     }
   }, []);
+
+  useEffect(() => {
+    if (!contextPad || activeTool === "select") return;
+
+    const rafId = requestAnimationFrame(() => {
+      updateContextPadPosition(contextPad.nodeId);
+    });
+
+    return () => cancelAnimationFrame(rafId);
+  }, [nodes, contextPad, activeTool, updateContextPadPosition]);
 
   const onNodeClick = useCallback(
     (event, node) => {
@@ -1606,11 +1674,7 @@ const WorkflowBuilderVisual = ({ workflow, tenantId, onClose }) => {
       setRightTab("versions");
       setStatusMessage("");
       if (reactFlowInstance && layoutedNodes.length > 0) {
-        const visualFlow = buildIntakeDisplayFlow(layoutedNodes, flowEdges, startId);
-        setTimeout(
-          () => zoomToStart(reactFlowInstance, visualFlow.visualNodes, visualFlow.visualStartNodeId || startId),
-          100,
-        );
+        setTimeout(() => zoomToStart(reactFlowInstance, layoutedNodes, startId), 100);
       }
     } catch (err) {
       setError(err.message || "Failed to load workflow version");
@@ -2031,22 +2095,6 @@ const WorkflowBuilderVisual = ({ workflow, tenantId, onClose }) => {
 
   const renderOverview = () => {
     const sortedNodes = getTopologicalOrder(nodes, edges, startNode);
-    const intakeItems = [
-      {
-        id: INTAKE_REPORTER_NODE_ID,
-        icon: "1",
-        color: "#8DE971",
-        label: "Reporter Type",
-        description: "Conversation starts by capturing the reporter type.",
-      },
-      {
-        id: INTAKE_PHONE_NODE_ID,
-        icon: "2",
-        color: "#bfdbfe",
-        label: "Phone Lookup",
-        description: "Customer phone lookup or confirmation happens before workflow-specific triage.",
-      },
-    ];
 
     return (
       <div>
@@ -2054,40 +2102,6 @@ const WorkflowBuilderVisual = ({ workflow, tenantId, onClose }) => {
           <div style={s.emptyState}>No nodes yet. Drag or click a node type from the left to add.</div>
         ) : (
           <>
-            {intakeItems.map((item, idx) => (
-              <div
-                key={item.id}
-                style={{
-                  ...s.overviewItem,
-                  backgroundColor: idx === 0 ? "rgba(141,233,113,0.08)" : "rgba(191,219,254,0.12)",
-                  borderTop: "2px solid transparent",
-                  cursor: "default",
-                }}
-              >
-                <div style={s.dragHandle}>
-                  <div style={s.dragLine} />
-                  <div style={s.dragLine} />
-                  <div style={s.dragLine} />
-                </div>
-                <div style={{ ...s.overviewIcon, backgroundColor: item.color }}>{item.icon}</div>
-                <div style={s.overviewText}>
-                  <div style={s.overviewType}>
-                    {idx + 1}. {item.label}
-                    <span
-                      style={{
-                        fontSize: "10px",
-                        color: "#6b7280",
-                        marginLeft: "6px",
-                        fontWeight: "600",
-                      }}
-                    >
-                      INTAKE
-                    </span>
-                  </div>
-                  <div style={s.overviewDesc}>{item.description}</div>
-                </div>
-              </div>
-            ))}
             {sortedNodes.map((node, idx) => {
             const meta = NODE_META[node.type] || {
               icon: "?",
@@ -2157,7 +2171,7 @@ const WorkflowBuilderVisual = ({ workflow, tenantId, onClose }) => {
                 <div style={{ ...s.overviewIcon, backgroundColor: meta.color }}>{meta.icon}</div>
                 <div style={s.overviewText}>
                   <div style={s.overviewType}>
-                    {idx + intakeItems.length + 1}. {meta.label}
+                    {idx + 1}. {meta.label}
                     {isStart && (
                       <span
                         style={{
@@ -2906,6 +2920,7 @@ const WorkflowBuilderVisual = ({ workflow, tenantId, onClose }) => {
           <ReactFlow
             nodes={visualNodes}
             edges={visualEdges}
+            edgeTypes={edgeTypes}
             onNodesChange={onNodesChange}
             onEdgesChange={onEdgesChange}
             onNodesDelete={onNodesDelete}

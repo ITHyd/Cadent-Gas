@@ -477,13 +477,8 @@ def _create_co_alarm_workflow(tenant_id: str) -> WorkflowDefinition:
         nodes=[
             WorkflowNode(id="safety_check", type=WorkflowNodeType.QUESTION, data={"question": "Are you and everyone in the property safe? Have you evacuated or moved to fresh air?", "variable": "is_safe", "options": [{"label": "Yes, we are outside/in fresh air", "score": 0}, {"label": "No, still inside the property", "score": 15}, {"label": "Someone is feeling unwell and cannot move", "score": 30}]}),
             WorkflowNode(id="co_symptoms", type=WorkflowNodeType.QUESTION, data={"question": "Is anyone experiencing any of these symptoms: headache, dizziness, nausea, breathlessness, or confusion?", "variable": "co_symptoms", "options": [{"label": "Yes - multiple people feel unwell", "score": 30}, {"label": "Yes - one person feels unwell", "score": 20}, {"label": "Mild headache only", "score": 10}, {"label": "No symptoms at all", "score": 0}]}),
-            WorkflowNode(id="check_severe_symptoms", type=WorkflowNodeType.CONDITION, data={"expression": "total_score >= 45"}),
-            WorkflowNode(id="emergency_symptoms_outcome", type=WorkflowNodeType.DECISION, data={"outcome": "emergency_dispatch", "message": "EMERGENCY: CO symptoms detected. Stay outside, do NOT re-enter. Emergency engineer being dispatched. Call 999 if anyone loses consciousness."}),
             WorkflowNode(id="alarm_type", type=WorkflowNodeType.QUESTION, data={"question": "What type of alarm is sounding?", "variable": "alarm_type", "options": [{"label": "CO (Carbon Monoxide) alarm", "score": 10}, {"label": "Smoke alarm", "score": 0}, {"label": "Combined smoke and CO alarm", "score": 10}, {"label": "Not sure / Don't know", "score": 5}]}),
-            WorkflowNode(id="check_smoke_alarm", type=WorkflowNodeType.CONDITION, data={"expression": "alarm_type == 'Smoke alarm'"}),
-            WorkflowNode(id="smoke_alarm_guidance", type=WorkflowNodeType.DECISION, data={"outcome": "close_with_guidance", "message": "This appears to be a smoke alarm, not a CO alarm. Smoke alarms detect fire/smoke, not carbon monoxide. Please check for any source of smoke. If you smell gas, call us back. If there is a fire, call 999."}),
             WorkflowNode(id="alarm_manufacturer", type=WorkflowNodeType.QUESTION, data={"question": "Can you see the brand name on the alarm?", "variable": "manufacturer", "options": [{"label": "Kidde", "score": 0}, {"label": "FireAngel", "score": 0}, {"label": "Aico", "score": 0}, {"label": "Firehawk", "score": 0}, {"label": "X-Sense", "score": 0}, {"label": "Honeywell", "score": 0}, {"label": "Google Nest", "score": 0}, {"label": "Netatmo", "score": 0}, {"label": "Cavius", "score": 0}, {"label": "Other / Cannot see", "score": 5}]}),
-            WorkflowNode(id="model_number", type=WorkflowNodeType.QUESTION, data={"question": "What model number is written on the alarm? If you cannot read it, type 'Unknown'.", "variable": "model_number"}),
             WorkflowNode(id="manufacturer_switch", type=WorkflowNodeType.SWITCH, data={"variable": "manufacturer", "label": "Manufacturer Routing", "cases": ["FireAngel", "Firehawk", "Aico", "Kidde", "X-Sense", "Honeywell", "Google Nest", "Netatmo", "Cavius"], "default": "Other"}),
             WorkflowNode(id="run_fireangel_triage", type=WorkflowNodeType.SUB_WORKFLOW, data={"label": "FireAngel manufacturer workflow", "workflow_id": _co_alarm_subworkflow_id(tenant_id, CO_ALARM_SUBFLOW_FIREANGEL), "result_prefix": "manufacturer_triage"}),
             WorkflowNode(id="run_firehawk_triage", type=WorkflowNodeType.SUB_WORKFLOW, data={"label": "Firehawk manufacturer workflow", "workflow_id": _co_alarm_subworkflow_id(tenant_id, CO_ALARM_SUBFLOW_FIREHAWK), "result_prefix": "manufacturer_triage"}),
@@ -498,14 +493,9 @@ def _create_co_alarm_workflow(tenant_id: str) -> WorkflowDefinition:
         ],
         edges=[
             WorkflowEdge(source="safety_check", target="co_symptoms"),
-            WorkflowEdge(source="co_symptoms", target="check_severe_symptoms"),
-            WorkflowEdge(source="check_severe_symptoms", target="emergency_symptoms_outcome", condition="True"),
-            WorkflowEdge(source="check_severe_symptoms", target="alarm_type", condition="False"),
-            WorkflowEdge(source="alarm_type", target="check_smoke_alarm"),
-            WorkflowEdge(source="check_smoke_alarm", target="smoke_alarm_guidance", condition="True"),
-            WorkflowEdge(source="check_smoke_alarm", target="alarm_manufacturer", condition="False"),
-            WorkflowEdge(source="alarm_manufacturer", target="model_number"),
-            WorkflowEdge(source="model_number", target="manufacturer_switch"),
+            WorkflowEdge(source="co_symptoms", target="alarm_type"),
+            WorkflowEdge(source="alarm_type", target="alarm_manufacturer"),
+            WorkflowEdge(source="alarm_manufacturer", target="manufacturer_switch"),
             WorkflowEdge(source="manufacturer_switch", target="run_fireangel_triage", condition="manufacturer == 'FireAngel'"),
             WorkflowEdge(source="manufacturer_switch", target="run_firehawk_triage", condition="manufacturer == 'Firehawk'"),
             WorkflowEdge(source="manufacturer_switch", target="run_aico_triage", condition="manufacturer == 'Aico'"),
@@ -521,43 +511,1744 @@ def _create_co_alarm_workflow(tenant_id: str) -> WorkflowDefinition:
 
 
 def _create_co_alarm_fireangel_workflow(tenant_id: str) -> WorkflowDefinition:
-    return _build_manufacturer_workflow(tenant_id, CO_ALARM_SUBFLOW_FIREANGEL, "fa_q1", [WorkflowNode(id="fa_q1", type=WorkflowNodeType.QUESTION, data={"group": "FireAngel", "question": "What colour light is flashing on your FireAngel alarm?", "variable": "fa_led", "options": [{"label": "Red", "score": 20}, {"label": "Amber / Yellow", "score": 0}, {"label": "Green", "score": 0}, {"label": "No light", "score": 3}]}), WorkflowNode(id="fa_check_red", type=WorkflowNodeType.CONDITION, data={"group": "FireAngel", "expression": "fa_led == 'Red'"}), WorkflowNode(id="fa_q2_red", type=WorkflowNodeType.QUESTION, data={"group": "FireAngel", "question": "Is your FireAngel alarm beeping loudly?", "variable": "fa_red_sound", "options": [{"label": "Yes - loud repeated beeps", "score": 25}, {"label": "Single chirp every minute", "score": 5}, {"label": "No sound (red light only)", "score": 10}]}), WorkflowNode(id="fa_check_co", type=WorkflowNodeType.CONDITION, data={"group": "FireAngel", "expression": "fa_red_sound == 'Yes - loud repeated beeps'"}), WorkflowNode(id="fa_co_out", type=WorkflowNodeType.DECISION, data={"group": "FireAngel", "outcome": "emergency_dispatch", "message": "CO DETECTED by your FireAngel alarm.\n\n1. Evacuate NOW\n2. Open doors/windows\n3. Do NOT re-enter\n4. Call 999 if unwell\n\nEngineer dispatched. FireAngel Support: 0330 094 5830"}), WorkflowNode(id="fa_memory_out", type=WorkflowNodeType.DECISION, data={"group": "FireAngel", "outcome": "schedule_engineer", "message": "Your FireAngel alarm detected CO while you were away.\n\n1. Ventilate the property\n2. Don't use gas appliances\n3. Press test button to clear memory\n\nEngineer will investigate."}), WorkflowNode(id="fa_check_amber", type=WorkflowNodeType.CONDITION, data={"group": "FireAngel", "expression": "fa_led == 'Amber / Yellow'"}), WorkflowNode(id="fa_q2_amber", type=WorkflowNodeType.QUESTION, data={"group": "FireAngel", "question": "Does the chirp happen at the same time as the amber flash?", "variable": "fa_chirp_sync", "options": [{"label": "Yes - chirp and flash together", "score": 0}, {"label": "No - chirp and flash at different times", "score": 0}]}), WorkflowNode(id="fa_check_sync", type=WorkflowNodeType.CONDITION, data={"group": "FireAngel", "expression": "fa_chirp_sync == 'Yes - chirp and flash together'"}), WorkflowNode(id="fa_battery_out", type=WorkflowNodeType.DECISION, data={"group": "FireAngel", "outcome": "close_with_guidance", "message": "LOW BATTERY / END OF LIFE (not CO).\n\nReplace batteries (FA6813) or the entire alarm (sealed models).\nPress test button to silence for 8 hours.\nNo engineer visit needed."}), WorkflowNode(id="fa_fault_out", type=WorkflowNodeType.DECISION, data={"group": "FireAngel", "outcome": "close_with_guidance", "message": "SENSOR FAULT - alarm cannot detect CO.\n\nReplace the alarm immediately.\nNo engineer visit needed."}), WorkflowNode(id="fa_normal_out", type=WorkflowNodeType.DECISION, data={"group": "FireAngel", "outcome": "close_with_guidance", "message": "Alarm appears normal. Press test button to confirm.\nIf it sounds again, call us back."})], [WorkflowEdge(source="fa_q1", target="fa_check_red"), WorkflowEdge(source="fa_check_red", target="fa_q2_red", condition="True"), WorkflowEdge(source="fa_q2_red", target="fa_check_co"), WorkflowEdge(source="fa_check_co", target="fa_co_out", condition="True"), WorkflowEdge(source="fa_check_co", target="fa_memory_out", condition="False"), WorkflowEdge(source="fa_check_red", target="fa_check_amber", condition="False"), WorkflowEdge(source="fa_check_amber", target="fa_q2_amber", condition="True"), WorkflowEdge(source="fa_q2_amber", target="fa_check_sync"), WorkflowEdge(source="fa_check_sync", target="fa_battery_out", condition="True"), WorkflowEdge(source="fa_check_sync", target="fa_fault_out", condition="False"), WorkflowEdge(source="fa_check_amber", target="fa_normal_out", condition="False")])
+    def _question(node_id: str, variable: str, question: str, options: list[dict]) -> WorkflowNode:
+        return WorkflowNode(
+            id=node_id,
+            type=WorkflowNodeType.QUESTION,
+            data={"group": "FireAngel", "question": question, "variable": variable, "options": options},
+        )
+
+    def _build_branch(prefix: str, questions: list[dict], messages: dict, label: str | None = None) -> tuple[list[WorkflowNode], list[WorkflowEdge]]:
+        nodes: list[WorkflowNode] = []
+        edges: list[WorkflowEdge] = []
+
+        for index, question in enumerate(questions):
+            q_id = f"{prefix}_q{index + 1}"
+            nodes.append(_question(q_id, question["variable"], question["question"], question["options"]))
+            if index > 0:
+                edges.append(WorkflowEdge(source=f"{prefix}_q{index}", target=q_id))
+
+        calc_id = f"{prefix}_calculate_score"
+        switch_id = f"{prefix}_risk_switch"
+        score_variable = f"{prefix}_score"
+        normalized_variable = f"{prefix}_normalized_score"
+        max_score = sum(
+            max(int(option.get("score", 0)) for option in question["options"])
+            for question in questions
+        )
+        safe_score_parts = " + ".join(
+            f"int({question['variable']}_score if '{question['variable']}_score' in locals() else 0)"
+            for question in questions
+        )
+
+        nodes.append(
+            WorkflowNode(
+                id=calc_id,
+                type=WorkflowNodeType.CALCULATE,
+                data={
+                    "group": "FireAngel",
+                    "calculation": (
+                        f"{score_variable} = {safe_score_parts}\n"
+                        f"{normalized_variable} = round(({score_variable} / {max_score}), 3) if {max_score} else 0"
+                    ),
+                    "result_variable": normalized_variable,
+                },
+            )
+        )
+        nodes.append(
+            WorkflowNode(
+                id=switch_id,
+                type=WorkflowNodeType.SWITCH,
+                data={
+                    "group": "FireAngel",
+                    "variable": normalized_variable,
+                    "label": f"{label or prefix} risk routing",
+                    "cases": ["Emergency", "Monitor", "Guidance"],
+                },
+            )
+        )
+        nodes.extend(
+            [
+                WorkflowNode(id=f"{prefix}_emergency_out", type=WorkflowNodeType.DECISION, data={"group": "FireAngel", "outcome": "emergency_dispatch", "message": messages["emergency"]}),
+                WorkflowNode(id=f"{prefix}_monitor_out", type=WorkflowNodeType.DECISION, data={"group": "FireAngel", "outcome": "monitor", "message": messages["monitor"]}),
+                WorkflowNode(id=f"{prefix}_guidance_out", type=WorkflowNodeType.DECISION, data={"group": "FireAngel", "outcome": "close_with_guidance", "message": messages["guidance"]}),
+            ]
+        )
+        edges.append(WorkflowEdge(source=f"{prefix}_q{len(questions)}", target=calc_id))
+        edges.append(WorkflowEdge(source=calc_id, target=switch_id))
+        edges.extend(
+            [
+                WorkflowEdge(source=switch_id, target=f"{prefix}_emergency_out", condition=f"{normalized_variable} >= 0.7"),
+                WorkflowEdge(source=switch_id, target=f"{prefix}_monitor_out", condition=f"{normalized_variable} >= 0.35"),
+                WorkflowEdge(source=switch_id, target=f"{prefix}_guidance_out"),
+            ]
+        )
+        return nodes, edges
+
+    fa6813_questions = [
+        {"variable": "fa6813_sound", "question": "What is the FA6813 doing?", "options": [{"label": "4 loud chirps", "score": 25}, {"label": "1 chirp / 40 sec", "score": 2}, {"label": "2 chirps / 40 sec", "score": 4}, {"label": "3 chirps / 40 sec", "score": 5}, {"label": "Not sure", "score": 6}]},
+        {"variable": "fa6813_led", "question": "Which FA6813 light fits?", "options": [{"label": "Red with sound", "score": 12}, {"label": "Amber 1 flash / 40 sec", "score": 2}, {"label": "Amber 2 flashes / 40 sec", "score": 4}, {"label": "Amber 3 flashes / 40 sec", "score": 5}, {"label": "Green pulse / 40 sec", "score": 1}]},
+        {"variable": "fa6813_timing", "question": "Which repeat time fits?", "options": [{"label": "Repeating alarm now", "score": 14}, {"label": "Every 40 sec only", "score": 3}, {"label": "Normal", "score": 1}, {"label": "Not sure", "score": 5}]},
+        {"variable": "fa6813_now", "question": "What best describes it right now?", "options": [{"label": "Alarm sounding now", "score": 16}, {"label": "Just a warning chirp", "score": 2}, {"label": "No sound, just a light", "score": 4}, {"label": "Normal", "score": 1}, {"label": "Not sure", "score": 6}]},
+        {"variable": "fa6813_issue", "question": "What does it seem like?", "options": [{"label": "Possible CO alarm", "score": 20}, {"label": "Low battery", "score": 2}, {"label": "Fault", "score": 4}, {"label": "End of life", "score": 4}, {"label": "Normal", "score": 1}, {"label": "Not sure", "score": 6}]},
+    ]
+    fa6829s_questions = [
+        {"variable": "fa6829s_sound", "question": "What is the FA6829S doing?", "options": [{"label": "4 loud chirps", "score": 25}, {"label": "1 chirp / 60 sec", "score": 2}, {"label": "2 chirps / 60 sec", "score": 4}, {"label": "3 chirps / 60 sec", "score": 5}, {"label": "Memory chirp", "score": 10}, {"label": "Not sure", "score": 6}]},
+        {"variable": "fa6829s_led", "question": "Which FA6829S light fits?", "options": [{"label": "Red with sound", "score": 12}, {"label": "Yellow 1 flash / 60 sec", "score": 2}, {"label": "Yellow 2 flashes / 60 sec", "score": 4}, {"label": "Yellow 3 flashes / 60 sec", "score": 5}, {"label": "Green pulse / 60 sec", "score": 1}]},
+        {"variable": "fa6829s_absence", "question": "Did it sound earlier when no one was there?", "options": [{"label": "Yes, memory only", "score": 10}, {"label": "No, alarm now", "score": 16}, {"label": "No, warning only", "score": 2}, {"label": "Not sure", "score": 6}]},
+        {"variable": "fa6829s_timing", "question": "Which repeat time fits?", "options": [{"label": "Repeating alarm now", "score": 14}, {"label": "Every 60 sec only", "score": 3}, {"label": "Stops after pressing test", "score": 2}, {"label": "Not sure", "score": 5}]},
+        {"variable": "fa6829s_issue", "question": "What does it seem like?", "options": [{"label": "Possible CO alarm", "score": 20}, {"label": "Alarm from earlier", "score": 10}, {"label": "Low battery", "score": 2}, {"label": "Fault / end of life", "score": 4}, {"label": "Normal", "score": 1}, {"label": "Not sure", "score": 6}]},
+    ]
+    fa33xx_questions = [
+        {"variable": "fa33xx_sound", "question": "What is the FA33xx alarm doing?", "options": [{"label": "4 loud chirps", "score": 25}, {"label": "1 chirp / min", "score": 2}, {"label": "2 chirps / min", "score": 4}, {"label": "3 chirps / min", "score": 5}, {"label": "1 short + 1 long", "score": 10}, {"label": "Not sure", "score": 6}]},
+        {"variable": "fa33xx_led", "question": "Which FA33xx light fits?", "options": [{"label": "Red flash each sec", "score": 12}, {"label": "Amber 1 flash / min", "score": 2}, {"label": "Amber 2 flashes / min", "score": 4}, {"label": "Amber 3 flashes / min", "score": 5}, {"label": "Amber / 25 sec", "score": 10}, {"label": "Not sure", "score": 6}]},
+        {"variable": "fa33xx_feature", "question": "What best describes it?", "options": [{"label": "Early warning", "score": 10}, {"label": "Alarm from earlier", "score": 10}, {"label": "Battery warning", "score": 2}, {"label": "Fault / end of life", "score": 4}, {"label": "Normal", "score": 1}, {"label": "Not sure", "score": 6}]},
+        {"variable": "fa33xx_now", "question": "What is happening right now?", "options": [{"label": "Alarm sounding now", "score": 16}, {"label": "Quiet now, but showed warning", "score": 10}, {"label": "Replace soon warning", "score": 2}, {"label": "Replace now warning", "score": 4}, {"label": "Not sure", "score": 6}]},
+        {"variable": "fa33xx_issue", "question": "What does it seem like?", "options": [{"label": "Possible CO alarm", "score": 20}, {"label": "Early warning", "score": 10}, {"label": "Alarm from earlier", "score": 10}, {"label": "Low battery", "score": 2}, {"label": "Fault / end of life", "score": 4}, {"label": "Normal", "score": 1}]},
+    ]
+    fa6812_questions = [
+        {"variable": "fa6812_sound", "question": "What is the FA6812 doing?", "options": [{"label": "4 loud chirps", "score": 25}, {"label": "1 chirp warning", "score": 2}, {"label": "2 chirps warning", "score": 4}, {"label": "3 chirps warning", "score": 5}, {"label": "Not sure", "score": 6}]},
+        {"variable": "fa6812_led", "question": "Which FA6812 light fits?", "options": [{"label": "Red with sound", "score": 12}, {"label": "Amber warning flash", "score": 4}, {"label": "Green pulse", "score": 1}, {"label": "Not sure", "score": 6}]},
+        {"variable": "fa6812_timing", "question": "Which repeat time fits?", "options": [{"label": "Repeating alarm now", "score": 14}, {"label": "Periodic warning only", "score": 4}, {"label": "Normal", "score": 1}, {"label": "Not sure", "score": 6}]},
+        {"variable": "fa6812_now", "question": "What best describes it right now?", "options": [{"label": "Alarm sounding now", "score": 16}, {"label": "Replace warning showing", "score": 4}, {"label": "Fault warning only", "score": 4}, {"label": "Normal", "score": 1}, {"label": "Not sure", "score": 6}]},
+        {"variable": "fa6812_issue", "question": "What does it seem like?", "options": [{"label": "Possible CO alarm", "score": 20}, {"label": "Battery / end of life", "score": 4}, {"label": "Fault", "score": 4}, {"label": "Normal", "score": 1}, {"label": "Not sure", "score": 6}]},
+    ]
+    fascb_questions = [
+        {"variable": "fascb_alarm_type", "question": "Which SCB10-R sound fits?", "options": [{"label": "4 quick beeps", "score": 25}, {"label": "3 long smoke beeps", "score": 6}, {"label": "1 chirp / 40 sec", "score": 2}, {"label": "2 chirps / 40 sec", "score": 4}, {"label": "Not sure", "score": 6}]},
+        {"variable": "fascb_led", "question": "Which SCB10-R light fits?", "options": [{"label": "Red with alarm", "score": 12}, {"label": "Amber 1 flash / 40 sec", "score": 2}, {"label": "Amber 2 flashes / 40 sec", "score": 4}, {"label": "Green pulse / 40 sec", "score": 1}, {"label": "Not sure", "score": 6}]},
+        {"variable": "fascb_precedence", "question": "Which does it sound more like?", "options": [{"label": "CO alarm", "score": 20}, {"label": "Smoke alarm", "score": 6}, {"label": "Battery warning", "score": 2}, {"label": "Fault", "score": 4}, {"label": "Not sure", "score": 6}]},
+        {"variable": "fascb_smoke", "question": "Is there smoke or burning too?", "options": [{"label": "No, just the alarm", "score": 16}, {"label": "Yes, there is smoke", "score": 6}, {"label": "No, just a warning chirp", "score": 2}, {"label": "Normal", "score": 1}, {"label": "Not sure", "score": 6}]},
+        {"variable": "fascb_issue", "question": "What does it seem like?", "options": [{"label": "Possible CO alarm", "score": 20}, {"label": "Smoke alarm", "score": 6}, {"label": "Low battery", "score": 2}, {"label": "Fault", "score": 4}, {"label": "Normal", "score": 1}, {"label": "Not sure", "score": 6}]},
+    ]
+    fafp_questions = [
+        {"variable": "fafp_led", "question": "Which FP1820W2 light fits?", "options": [{"label": "Red flash / 5 sec", "score": 12}, {"label": "Green flash / min", "score": 1}, {"label": "Amber flash / min", "score": 2}, {"label": "Double amber flash", "score": 4}, {"label": "Not sure", "score": 6}]},
+        {"variable": "fafp_sound", "question": "What is the W2-CO-10X doing?", "options": [{"label": "4 audible chirps", "score": 25}, {"label": "1 chirp / min", "score": 2}, {"label": "Chirp off-sync to amber", "score": 4}, {"label": "No sound", "score": 1}, {"label": "Not sure", "score": 6}]},
+        {"variable": "fafp_sync", "question": "Does the chirp happen with the amber light?", "options": [{"label": "Yes, same time", "score": 2}, {"label": "No, different time", "score": 4}, {"label": "Red alarm is sounding", "score": 16}, {"label": "Not sure", "score": 6}]},
+        {"variable": "fafp_now", "question": "What best describes it right now?", "options": [{"label": "Alarm sounding now", "score": 16}, {"label": "Replace-soon warning", "score": 2}, {"label": "Replace-now warning", "score": 4}, {"label": "Normal", "score": 1}, {"label": "Not sure", "score": 6}]},
+        {"variable": "fafp_issue", "question": "What does it seem like?", "options": [{"label": "Possible CO alarm", "score": 20}, {"label": "Low battery / sensor life", "score": 2}, {"label": "Sensor fault", "score": 4}, {"label": "Normal", "score": 1}, {"label": "Not sure", "score": 6}]},
+    ]
+    fageneric_questions = [
+        {"variable": "fageneric_sound", "question": "What is the FireAngel alarm doing?", "options": [{"label": "4 loud chirps", "score": 25}, {"label": "1 warning chirp", "score": 2}, {"label": "2-3 warning chirps", "score": 4}, {"label": "3 long smoke beeps", "score": 6}, {"label": "Not sure", "score": 6}]},
+        {"variable": "fageneric_led", "question": "Which FireAngel light fits?", "options": [{"label": "Red with sound", "score": 12}, {"label": "Amber warning flash", "score": 4}, {"label": "Green power flash", "score": 1}, {"label": "Not sure", "score": 6}]},
+        {"variable": "fageneric_timing", "question": "Which repeat time fits?", "options": [{"label": "Continuous alarm", "score": 15}, {"label": "Every 25 sec", "score": 10}, {"label": "Every 40 sec", "score": 4}, {"label": "Every 60 sec", "score": 4}, {"label": "Not sure", "score": 6}]},
+        {"variable": "fageneric_feature", "question": "What best describes it?", "options": [{"label": "Early warning / memory", "score": 10}, {"label": "Battery warning", "score": 2}, {"label": "Fault / end of life", "score": 4}, {"label": "Smoke alarm", "score": 6}, {"label": "Normal", "score": 1}, {"label": "Not sure", "score": 6}]},
+        {"variable": "fageneric_action", "question": "What is happening right now?", "options": [{"label": "Alarm sounding now", "score": 16}, {"label": "Quiet, but warning shown", "score": 10}, {"label": "Battery or replace warning showing", "score": 4}, {"label": "Normal", "score": 1}, {"label": "Not sure", "score": 6}]},
+    ]
+
+    nodes = [
+        WorkflowNode(
+            id="fa_model",
+            type=WorkflowNodeType.QUESTION,
+            data={
+                "group": "FireAngel",
+                "question": "Which FireAngel model is shown?",
+                "variable": "fa_model",
+                "options": [
+                    {"label": "FA6813", "score": 1},
+                    {"label": "FA6829S", "score": 1},
+                    {"label": "FA3313", "score": 1},
+                    {"label": "FA3322", "score": 1},
+                    {"label": "FA3328", "score": 1},
+                    {"label": "FA3820", "score": 1},
+                    {"label": "FA6812", "score": 1},
+                    {"label": "SCB10-R", "score": 1},
+                    {"label": "FP1820W2", "score": 1},
+                    {"label": "Not sure / another FireAngel model", "score": 1},
+                ],
+            },
+        ),
+        WorkflowNode(
+            id="fa_model_switch",
+            type=WorkflowNodeType.SWITCH,
+            data={
+                "group": "FireAngel",
+                "variable": "fa_model",
+                "label": "FireAngel model routing",
+                "cases": ["FA6813", "FA6829S", "FA3313", "FA3322", "FA3328", "FA3820", "FA6812", "SCB10-R", "FP1820W2", "Not sure / another FireAngel model"],
+                "default": "Not sure / another FireAngel model",
+            },
+        ),
+    ]
+    edges = [
+        WorkflowEdge(source="fa_model", target="fa_model_switch"),
+        WorkflowEdge(source="fa_model_switch", target="fa6813_q1", condition="fa_model == 'FA6813'"),
+        WorkflowEdge(source="fa_model_switch", target="fa6829s_q1", condition="fa_model == 'FA6829S'"),
+        WorkflowEdge(source="fa_model_switch", target="fa33xx_q1", condition="fa_model == 'FA3313'"),
+        WorkflowEdge(source="fa_model_switch", target="fa33xx_q1", condition="fa_model == 'FA3322'"),
+        WorkflowEdge(source="fa_model_switch", target="fa33xx_q1", condition="fa_model == 'FA3328'"),
+        WorkflowEdge(source="fa_model_switch", target="fa33xx_q1", condition="fa_model == 'FA3820'"),
+        WorkflowEdge(source="fa_model_switch", target="fa6812_q1", condition="fa_model == 'FA6812'"),
+        WorkflowEdge(source="fa_model_switch", target="fascb_q1", condition="fa_model == 'SCB10-R'"),
+        WorkflowEdge(source="fa_model_switch", target="fafp_q1", condition="fa_model == 'FP1820W2'"),
+        WorkflowEdge(source="fa_model_switch", target="fageneric_q1", condition="fa_model == 'Not sure / another FireAngel model'"),
+    ]
+
+    branch_specs = [
+        ("fa6813", fa6813_questions, {
+            "emergency": "FireAngel FA6813 score indicates a likely live CO alarm.\n\n1. Evacuate immediately\n2. Open doors and windows\n3. Do not re-enter\n4. Call 999 if anyone feels unwell\n\nEmergency engineer dispatched.",
+            "monitor": "FireAngel FA6813 score is inconclusive.\n\nVentilate the property, avoid fuel-burning appliances, and monitor the alarm closely. Escalate if it repeats or worsens.",
+            "guidance": "FireAngel FA6813 score fits a maintenance or non-emergency pattern.\n\nFollow the FA6813 guidance for battery, fault, end-of-life, or test status.",
+        }),
+        ("fa6829s", fa6829s_questions, {
+            "emergency": "FireAngel FA6829S score indicates a likely live CO alarm.\n\n1. Evacuate immediately\n2. Open doors and windows\n3. Do not re-enter\n4. Call 999 if anyone feels unwell\n\nEmergency engineer dispatched.",
+            "monitor": "FireAngel FA6829S score is inconclusive.\n\nVentilate the property, avoid fuel-burning appliances, and monitor the alarm closely. Escalate if it repeats or worsens.",
+            "guidance": "FireAngel FA6829S score fits a maintenance or non-emergency pattern.\n\nFollow the FA6829S guidance for battery, fault, end-of-life, or test status.",
+        }),
+        ("fa33xx", fa33xx_questions, {
+            "emergency": "FireAngel FA3313 / FA3322 / FA3328 / FA3820 score indicates a likely live CO alarm.\n\n1. Evacuate immediately\n2. Open doors and windows\n3. Do not re-enter\n4. Call 999 if anyone feels unwell\n\nEmergency engineer dispatched.",
+            "monitor": "FireAngel FA3313 / FA3322 / FA3328 / FA3820 score is inconclusive.\n\nVentilate the property, avoid fuel-burning appliances, and monitor the alarm closely. Escalate if it repeats or worsens.",
+            "guidance": "FireAngel FA3313 / FA3322 / FA3328 / FA3820 score fits a maintenance or non-emergency pattern.\n\nFollow the manual guidance for battery, fault, end-of-life, or test status.",
+        }),
+        ("fa6812", fa6812_questions, {
+            "emergency": "FireAngel FA6812 score indicates a likely live CO alarm.\n\n1. Evacuate immediately\n2. Open doors and windows\n3. Do not re-enter\n4. Call 999 if anyone feels unwell\n\nEmergency engineer dispatched.",
+            "monitor": "FireAngel FA6812 score is inconclusive.\n\nVentilate the property, avoid fuel-burning appliances, and monitor the alarm closely. Escalate if it repeats or worsens.",
+            "guidance": "FireAngel FA6812 score fits a maintenance or non-emergency pattern.\n\nFollow the FA6812 guidance for battery, fault, end-of-life, or test status.",
+        }),
+        ("fascb", fascb_questions, {
+            "emergency": "FireAngel SCB10-R score indicates a likely live CO alarm.\n\n1. Evacuate immediately\n2. Open doors and windows\n3. Do not re-enter\n4. Call 999 if anyone feels unwell\n\nEmergency engineer dispatched.",
+            "monitor": "FireAngel SCB10-R score is inconclusive.\n\nVentilate the property, avoid fuel-burning appliances, and monitor the alarm closely. Escalate if it repeats or worsens.",
+            "guidance": "FireAngel SCB10-R score fits a maintenance or non-emergency pattern.\n\nFollow the SCB10-R guidance for battery, fault, end-of-life, or test status.",
+        }),
+        ("fafp", fafp_questions, {
+            "emergency": "FireAngel FP1820W2 score indicates a likely live CO alarm.\n\n1. Evacuate immediately\n2. Open doors and windows\n3. Do not re-enter\n4. Call 999 if anyone feels unwell\n\nEmergency engineer dispatched.",
+            "monitor": "FireAngel FP1820W2 score is inconclusive.\n\nVentilate the property, avoid fuel-burning appliances, and monitor the alarm closely. Escalate if it repeats or worsens.",
+            "guidance": "FireAngel FP1820W2 score fits a maintenance or non-emergency pattern.\n\nFollow the FP1820W2 guidance for battery, fault, end-of-life, or test status.",
+        }),
+        ("fageneric", fageneric_questions, {
+            "emergency": "Generic FireAngel score indicates a likely live CO alarm.\n\n1. Evacuate immediately\n2. Open doors and windows\n3. Do not re-enter\n4. Call 999 if anyone feels unwell\n\nEmergency engineer dispatched.",
+            "monitor": "Generic FireAngel score is inconclusive.\n\nVentilate the property, avoid fuel-burning appliances, and monitor the alarm closely. Escalate if it repeats or worsens.",
+            "guidance": "Generic FireAngel score fits a maintenance or non-emergency pattern.\n\nFollow the alarm guidance for battery, fault, end-of-life, or test status.",
+        }),
+    ]
+
+    for prefix, questions, messages in branch_specs:
+        branch_nodes, branch_edges = _build_branch(prefix, questions, messages)
+        nodes.extend(branch_nodes)
+        edges.extend(branch_edges)
+
+    return _build_manufacturer_workflow(tenant_id, CO_ALARM_SUBFLOW_FIREANGEL, "fa_model", nodes, edges)
 
 
 def _create_co_alarm_firehawk_workflow(tenant_id: str) -> WorkflowDefinition:
-    return _build_manufacturer_workflow(tenant_id, CO_ALARM_SUBFLOW_FIREHAWK, "fh_q1", [WorkflowNode(id="fh_q1", type=WorkflowNodeType.QUESTION, data={"group": "Firehawk", "question": "What colour light is flashing on your Firehawk alarm?", "variable": "fh_led", "options": [{"label": "Red", "score": 20}, {"label": "Red + Yellow together", "score": 0}, {"label": "Green", "score": 0}, {"label": "No light", "score": 3}]}), WorkflowNode(id="fh_check_red", type=WorkflowNodeType.CONDITION, data={"group": "Firehawk", "expression": "fh_led == 'Red'"}), WorkflowNode(id="fh_q2", type=WorkflowNodeType.QUESTION, data={"group": "Firehawk", "question": "How many beeps between pauses?", "variable": "fh_beeps", "options": [{"label": "4 beeps repeating (loud)", "score": 25}, {"label": "1 beep every minute", "score": 0}, {"label": "3 beeps every minute", "score": 0}]}), WorkflowNode(id="fh_check_co", type=WorkflowNodeType.CONDITION, data={"group": "Firehawk", "expression": "fh_beeps == '4 beeps repeating (loud)'"}), WorkflowNode(id="fh_co_out", type=WorkflowNodeType.DECISION, data={"group": "Firehawk", "outcome": "emergency_dispatch", "message": "CO DETECTED by your Firehawk alarm.\n\n1. Evacuate NOW\n2. Open doors/windows\n3. Do NOT re-enter\n4. Call 999 if unwell\n\nEngineer dispatched."}), WorkflowNode(id="fh_check_eol", type=WorkflowNodeType.CONDITION, data={"group": "Firehawk", "expression": "fh_beeps == '3 beeps every minute'"}), WorkflowNode(id="fh_eol_out", type=WorkflowNodeType.DECISION, data={"group": "Firehawk", "outcome": "close_with_guidance", "message": "END OF ALARM LIFE.\n\nReplace the entire alarm. No engineer visit needed."}), WorkflowNode(id="fh_battery_out", type=WorkflowNodeType.DECISION, data={"group": "Firehawk", "outcome": "close_with_guidance", "message": "LOW BATTERY (not CO). Replace the alarm (sealed battery).\nNo engineer visit needed."}), WorkflowNode(id="fh_check_fault", type=WorkflowNodeType.CONDITION, data={"group": "Firehawk", "expression": "fh_led == 'Red + Yellow together'"}), WorkflowNode(id="fh_fault_out", type=WorkflowNodeType.DECISION, data={"group": "Firehawk", "outcome": "close_with_guidance", "message": "ALARM FAULT. Red + Yellow LEDs = hardware/sensor fault.\nReplace the alarm immediately. No engineer visit needed."}), WorkflowNode(id="fh_normal_out", type=WorkflowNodeType.DECISION, data={"group": "Firehawk", "outcome": "close_with_guidance", "message": "Alarm appears normal. Press test button to confirm.\nIf it sounds again, call us back."})], [WorkflowEdge(source="fh_q1", target="fh_check_red"), WorkflowEdge(source="fh_check_red", target="fh_q2", condition="True"), WorkflowEdge(source="fh_q2", target="fh_check_co"), WorkflowEdge(source="fh_check_co", target="fh_co_out", condition="True"), WorkflowEdge(source="fh_check_co", target="fh_check_eol", condition="False"), WorkflowEdge(source="fh_check_eol", target="fh_eol_out", condition="True"), WorkflowEdge(source="fh_check_eol", target="fh_battery_out", condition="False"), WorkflowEdge(source="fh_check_red", target="fh_check_fault", condition="False"), WorkflowEdge(source="fh_check_fault", target="fh_fault_out", condition="True"), WorkflowEdge(source="fh_check_fault", target="fh_normal_out", condition="False")])
+    def _question(node_id: str, variable: str, question: str, options: list[dict]) -> WorkflowNode:
+        return WorkflowNode(
+            id=node_id,
+            type=WorkflowNodeType.QUESTION,
+            data={"group": "Firehawk", "question": question, "variable": variable, "options": options},
+        )
+
+    def _build_branch(prefix: str, questions: list[dict], messages: dict, label: str | None = None) -> tuple[list[WorkflowNode], list[WorkflowEdge]]:
+        nodes: list[WorkflowNode] = []
+        edges: list[WorkflowEdge] = []
+
+        for index, question in enumerate(questions):
+            q_id = f"{prefix}_q{index + 1}"
+            nodes.append(_question(q_id, question["variable"], question["question"], question["options"]))
+            if index > 0:
+                edges.append(WorkflowEdge(source=f"{prefix}_q{index}", target=q_id))
+
+        calc_id = f"{prefix}_calculate_score"
+        switch_id = f"{prefix}_risk_switch"
+        score_variable = f"{prefix}_score"
+        normalized_variable = f"{prefix}_normalized_score"
+        max_score = sum(
+            max(int(option.get("score", 0)) for option in question["options"])
+            for question in questions
+        )
+        safe_score_parts = " + ".join(
+            f"int({question['variable']}_score if '{question['variable']}_score' in locals() else 0)"
+            for question in questions
+        )
+
+        nodes.append(
+            WorkflowNode(
+                id=calc_id,
+                type=WorkflowNodeType.CALCULATE,
+                data={
+                    "group": "Firehawk",
+                    "calculation": (
+                        f"{score_variable} = {safe_score_parts}\n"
+                        f"{normalized_variable} = round(({score_variable} / {max_score}), 3) if {max_score} else 0"
+                    ),
+                    "result_variable": normalized_variable,
+                },
+            )
+        )
+        nodes.append(
+            WorkflowNode(
+                id=switch_id,
+                type=WorkflowNodeType.SWITCH,
+                data={
+                    "group": "Firehawk",
+                    "variable": normalized_variable,
+                    "label": f"{label or prefix} risk routing",
+                    "cases": ["Emergency", "Monitor", "Guidance"],
+                },
+            )
+        )
+        nodes.extend(
+            [
+                WorkflowNode(id=f"{prefix}_emergency_out", type=WorkflowNodeType.DECISION, data={"group": "Firehawk", "outcome": "emergency_dispatch", "message": messages["emergency"]}),
+                WorkflowNode(id=f"{prefix}_monitor_out", type=WorkflowNodeType.DECISION, data={"group": "Firehawk", "outcome": "monitor", "message": messages["monitor"]}),
+                WorkflowNode(id=f"{prefix}_guidance_out", type=WorkflowNodeType.DECISION, data={"group": "Firehawk", "outcome": "close_with_guidance", "message": messages["guidance"]}),
+            ]
+        )
+        edges.append(WorkflowEdge(source=f"{prefix}_q{len(questions)}", target=calc_id))
+        edges.append(WorkflowEdge(source=calc_id, target=switch_id))
+        edges.extend(
+            [
+                WorkflowEdge(source=switch_id, target=f"{prefix}_emergency_out", condition=f"{normalized_variable} >= 0.7"),
+                WorkflowEdge(source=switch_id, target=f"{prefix}_monitor_out", condition=f"{normalized_variable} >= 0.35"),
+                WorkflowEdge(source=switch_id, target=f"{prefix}_guidance_out"),
+            ]
+        )
+        return nodes, edges
+
+    fh57_questions = [
+        {"variable": "fh57_sound", "question": "What is the alarm doing?", "options": [{"label": "4 loud beeps", "score": 25}, {"label": "1 beep / min", "score": 2}, {"label": "2 beeps / min", "score": 4}, {"label": "3 beeps / min", "score": 5}, {"label": "Not sure", "score": 6}]},
+        {"variable": "fh57_led", "question": "Which light do you see?", "options": [{"label": "Red with sound", "score": 12}, {"label": "Red + yellow", "score": 4}, {"label": "Green flash", "score": 1}, {"label": "No light", "score": 2}, {"label": "Not sure", "score": 6}]},
+        {"variable": "fh57_now", "question": "What best describes it right now?", "options": [{"label": "Alarm sounding now", "score": 16}, {"label": "Just warning chirps", "score": 3}, {"label": "Normal", "score": 1}, {"label": "Quiet now", "score": 4}, {"label": "Not sure", "score": 6}]},
+        {"variable": "fh57_pattern", "question": "How often does it repeat?", "options": [{"label": "Keeps repeating", "score": 14}, {"label": "About every minute", "score": 4}, {"label": "Normal", "score": 1}, {"label": "Not sure", "score": 6}]},
+        {"variable": "fh57_issue", "question": "What does it seem like?", "options": [{"label": "Possible CO alarm", "score": 20}, {"label": "Low battery", "score": 2}, {"label": "Fault", "score": 4}, {"label": "End of life", "score": 5}, {"label": "Normal", "score": 1}, {"label": "Not sure", "score": 6}]},
+    ]
+    fh10rf_questions = [
+        {"variable": "fh10rf_sound", "question": "What is the CO10-RF doing?", "options": [{"label": "4 loud beeps", "score": 25}, {"label": "1 beep / min", "score": 2}, {"label": "2 beeps / min", "score": 4}, {"label": "3 beeps / min", "score": 5}, {"label": "Not sure", "score": 6}]},
+        {"variable": "fh10rf_led", "question": "Which CO10-RF light fits?", "options": [{"label": "Red with sound", "score": 12}, {"label": "Yellow warning light", "score": 4}, {"label": "Green power flash", "score": 1}, {"label": "No light", "score": 2}, {"label": "Not sure", "score": 6}]},
+        {"variable": "fh10rf_hush", "question": "Did it stop after hush / test?", "options": [{"label": "No, it keeps alarming", "score": 16}, {"label": "Yes, only after pressing test", "score": 2}, {"label": "Yes, warning only", "score": 3}, {"label": "Not sure", "score": 6}]},
+        {"variable": "fh10rf_pattern", "question": "How often does it happen?", "options": [{"label": "Keeps repeating", "score": 14}, {"label": "About every minute", "score": 4}, {"label": "Normal", "score": 1}, {"label": "Not sure", "score": 6}]},
+        {"variable": "fh10rf_issue", "question": "What does it seem like?", "options": [{"label": "Possible CO alarm", "score": 20}, {"label": "Low battery", "score": 2}, {"label": "Fault", "score": 4}, {"label": "End of life", "score": 5}, {"label": "Normal", "score": 1}, {"label": "Not sure", "score": 6}]},
+    ]
+    fh10y_questions = [
+        {"variable": "fh10y_sound", "question": "What is the CO7B-10Y doing?", "options": [{"label": "4 loud beeps", "score": 25}, {"label": "1 beep / min", "score": 2}, {"label": "2 beeps / min", "score": 4}, {"label": "3 beeps / min", "score": 5}, {"label": "Not sure", "score": 6}]},
+        {"variable": "fh10y_led", "question": "Which light do you see?", "options": [{"label": "Red with sound", "score": 12}, {"label": "Yellow warning light", "score": 4}, {"label": "Green power flash", "score": 1}, {"label": "No light", "score": 2}, {"label": "Not sure", "score": 6}]},
+        {"variable": "fh10y_now", "question": "What best describes it right now?", "options": [{"label": "Alarm sounding now", "score": 16}, {"label": "Just warning chirps", "score": 3}, {"label": "Normal", "score": 1}, {"label": "Quiet now", "score": 4}, {"label": "Not sure", "score": 6}]},
+        {"variable": "fh10y_replace", "question": "Does it sound like a replace warning?", "options": [{"label": "Yes, needs replacing", "score": 5}, {"label": "No, active alarm", "score": 16}, {"label": "No, battery / fault only", "score": 3}, {"label": "Not sure", "score": 6}]},
+        {"variable": "fh10y_issue", "question": "What does it seem like?", "options": [{"label": "Possible CO alarm", "score": 20}, {"label": "Low battery", "score": 2}, {"label": "Fault", "score": 4}, {"label": "End of life", "score": 5}, {"label": "Normal", "score": 1}, {"label": "Not sure", "score": 6}]},
+    ]
+    fhgeneric_questions = [
+        {"variable": "fhgeneric_sound", "question": "What is the Firehawk alarm doing?", "options": [{"label": "4 loud beeps", "score": 25}, {"label": "1 warning beep", "score": 2}, {"label": "2 warning beeps", "score": 4}, {"label": "3 warning beeps", "score": 5}, {"label": "Not sure", "score": 6}]},
+        {"variable": "fhgeneric_led", "question": "Which light do you see?", "options": [{"label": "Red with sound", "score": 12}, {"label": "Yellow warning light", "score": 4}, {"label": "Green power flash", "score": 1}, {"label": "No light", "score": 2}, {"label": "Not sure", "score": 6}]},
+        {"variable": "fhgeneric_now", "question": "What best describes it right now?", "options": [{"label": "Alarm sounding now", "score": 16}, {"label": "Just warning chirps", "score": 3}, {"label": "Normal", "score": 1}, {"label": "Quiet now", "score": 4}, {"label": "Not sure", "score": 6}]},
+        {"variable": "fhgeneric_pattern", "question": "How often does it happen?", "options": [{"label": "Keeps repeating", "score": 14}, {"label": "About every minute", "score": 4}, {"label": "Normal", "score": 1}, {"label": "Not sure", "score": 6}]},
+        {"variable": "fhgeneric_issue", "question": "What does it seem like?", "options": [{"label": "Possible CO alarm", "score": 20}, {"label": "Low battery", "score": 2}, {"label": "Fault", "score": 4}, {"label": "End of life", "score": 5}, {"label": "Normal", "score": 1}, {"label": "Not sure", "score": 6}]},
+    ]
+
+    nodes = [
+        WorkflowNode(
+            id="fh_model",
+            type=WorkflowNodeType.QUESTION,
+            data={
+                "group": "Firehawk",
+                "question": "Which Firehawk model is shown?",
+                "variable": "fh_model",
+                "options": [
+                    {"label": "CO5B", "score": 1},
+                    {"label": "CO7B", "score": 1},
+                    {"label": "CO7BD", "score": 1},
+                    {"label": "CO10-RF", "score": 1},
+                    {"label": "CO7B-10Y", "score": 1},
+                    {"label": "Not sure / another Firehawk model", "score": 1},
+                ],
+            },
+        ),
+        WorkflowNode(
+            id="fh_model_switch",
+            type=WorkflowNodeType.SWITCH,
+            data={
+                "group": "Firehawk",
+                "variable": "fh_model",
+                "label": "Firehawk model routing",
+                "cases": ["CO5B", "CO7B", "CO7BD", "CO10-RF", "CO7B-10Y", "Not sure / another Firehawk model"],
+                "default": "Not sure / another Firehawk model",
+            },
+        ),
+    ]
+    edges = [
+        WorkflowEdge(source="fh_model", target="fh_model_switch"),
+        WorkflowEdge(source="fh_model_switch", target="fh57_q1", condition="fh_model == 'CO5B'"),
+        WorkflowEdge(source="fh_model_switch", target="fh57_q1", condition="fh_model == 'CO7B'"),
+        WorkflowEdge(source="fh_model_switch", target="fh57_q1", condition="fh_model == 'CO7BD'"),
+        WorkflowEdge(source="fh_model_switch", target="fh10rf_q1", condition="fh_model == 'CO10-RF'"),
+        WorkflowEdge(source="fh_model_switch", target="fh10y_q1", condition="fh_model == 'CO7B-10Y'"),
+        WorkflowEdge(source="fh_model_switch", target="fhgeneric_q1", condition="fh_model == 'Not sure / another Firehawk model'"),
+    ]
+
+    branch_specs = [
+        ("fh57", fh57_questions, {
+            "emergency": "Firehawk CO5B / CO7B / CO7BD score indicates a likely live CO alarm.\n\n1. Evacuate immediately\n2. Open doors and windows\n3. Do not re-enter\n4. Call 999 if anyone feels unwell\n\nEmergency engineer dispatched.",
+            "monitor": "Firehawk CO5B / CO7B / CO7BD score is inconclusive.\n\nVentilate the property, avoid fuel-burning appliances, and monitor the alarm closely.",
+            "guidance": "Firehawk CO5B / CO7B / CO7BD score fits a maintenance or non-emergency pattern.\n\nFollow the manual guidance for battery, fault, end-of-life, or test status.",
+        }, "CO5B / CO7B / CO7BD"),
+        ("fh10rf", fh10rf_questions, {
+            "emergency": "Firehawk CO10-RF score indicates a likely live CO alarm.\n\n1. Evacuate immediately\n2. Open doors and windows\n3. Do not re-enter\n4. Call 999 if anyone feels unwell\n\nEmergency engineer dispatched.",
+            "monitor": "Firehawk CO10-RF score is inconclusive.\n\nVentilate the property, avoid fuel-burning appliances, and monitor the alarm closely.",
+            "guidance": "Firehawk CO10-RF score fits a maintenance or non-emergency pattern.\n\nFollow the CO10-RF guidance for battery, fault, end-of-life, or test status.",
+        }, "CO10-RF"),
+        ("fh10y", fh10y_questions, {
+            "emergency": "Firehawk CO7B-10Y score indicates a likely live CO alarm.\n\n1. Evacuate immediately\n2. Open doors and windows\n3. Do not re-enter\n4. Call 999 if anyone feels unwell\n\nEmergency engineer dispatched.",
+            "monitor": "Firehawk CO7B-10Y score is inconclusive.\n\nVentilate the property, avoid fuel-burning appliances, and monitor the alarm closely.",
+            "guidance": "Firehawk CO7B-10Y score fits a maintenance or non-emergency pattern.\n\nFollow the CO7B-10Y guidance for battery, fault, end-of-life, or test status.",
+        }, "CO7B-10Y"),
+        ("fhgeneric", fhgeneric_questions, {
+            "emergency": "Generic Firehawk score indicates a likely live CO alarm.\n\n1. Evacuate immediately\n2. Open doors and windows\n3. Do not re-enter\n4. Call 999 if anyone feels unwell\n\nEmergency engineer dispatched.",
+            "monitor": "Generic Firehawk score is inconclusive.\n\nVentilate the property, avoid fuel-burning appliances, and monitor the alarm closely.",
+            "guidance": "Generic Firehawk score fits a maintenance or non-emergency pattern.\n\nFollow the alarm guidance for battery, fault, end-of-life, or test status.",
+        }, "Unknown Firehawk"),
+    ]
+
+    for prefix, questions, messages, label in branch_specs:
+        branch_nodes, branch_edges = _build_branch(prefix, questions, messages, label)
+        nodes.extend(branch_nodes)
+        edges.extend(branch_edges)
+
+    return _build_manufacturer_workflow(tenant_id, CO_ALARM_SUBFLOW_FIREHAWK, "fh_model", nodes, edges)
 
 
 def _create_co_alarm_aico_workflow(tenant_id: str) -> WorkflowDefinition:
-    return _build_manufacturer_workflow(tenant_id, CO_ALARM_SUBFLOW_AICO, "aico_q1", [WorkflowNode(id="aico_q1", type=WorkflowNodeType.QUESTION, data={"group": "Aico", "question": "What colour light is flashing on your Aico alarm?", "variable": "aico_led", "options": [{"label": "Red", "score": 20}, {"label": "Yellow", "score": 0}, {"label": "Green", "score": 0}, {"label": "No light", "score": 3}]}), WorkflowNode(id="aico_check_red", type=WorkflowNodeType.CONDITION, data={"group": "Aico", "expression": "aico_led == 'Red'"}), WorkflowNode(id="aico_co_out", type=WorkflowNodeType.DECISION, data={"group": "Aico", "outcome": "emergency_dispatch", "message": "CO DETECTED by your Aico alarm.\n\n1. Evacuate NOW\n2. Open doors/windows\n3. Do NOT re-enter\n4. Call 999 if unwell\n\nEngineer dispatched."}), WorkflowNode(id="aico_check_yellow", type=WorkflowNodeType.CONDITION, data={"group": "Aico", "expression": "aico_led == 'Yellow'"}), WorkflowNode(id="aico_q2", type=WorkflowNodeType.QUESTION, data={"group": "Aico", "question": "How many yellow flashes before a pause?", "variable": "aico_flashes", "options": [{"label": "1 flash", "score": 0}, {"label": "2 flashes", "score": 0}, {"label": "3 flashes", "score": 0}]}), WorkflowNode(id="aico_check_1f", type=WorkflowNodeType.CONDITION, data={"group": "Aico", "expression": "aico_flashes == '1 flash'"}), WorkflowNode(id="aico_battery_out", type=WorkflowNodeType.DECISION, data={"group": "Aico", "outcome": "close_with_guidance", "message": "LOW BATTERY (not CO).\n\nEi207: replace AAA batteries. Ei208 (sealed): replace alarm.\nPress test button to silence for 12 hours.\nNo engineer visit needed."}), WorkflowNode(id="aico_check_2f", type=WorkflowNodeType.CONDITION, data={"group": "Aico", "expression": "aico_flashes == '2 flashes'"}), WorkflowNode(id="aico_fault_out", type=WorkflowNodeType.DECISION, data={"group": "Aico", "outcome": "close_with_guidance", "message": "SENSOR FAULT - alarm cannot detect CO.\nReplace immediately. No engineer visit needed."}), WorkflowNode(id="aico_eol_out", type=WorkflowNodeType.DECISION, data={"group": "Aico", "outcome": "close_with_guidance", "message": "END OF ALARM LIFE.\nReplace the alarm. Can silence for 24hrs (max 30 days).\nNo engineer visit needed."}), WorkflowNode(id="aico_normal_out", type=WorkflowNodeType.DECISION, data={"group": "Aico", "outcome": "close_with_guidance", "message": "Alarm appears normal. Press test button to confirm.\nIf it sounds again, call us back."})], [WorkflowEdge(source="aico_q1", target="aico_check_red"), WorkflowEdge(source="aico_check_red", target="aico_co_out", condition="True"), WorkflowEdge(source="aico_check_red", target="aico_check_yellow", condition="False"), WorkflowEdge(source="aico_check_yellow", target="aico_q2", condition="True"), WorkflowEdge(source="aico_q2", target="aico_check_1f"), WorkflowEdge(source="aico_check_1f", target="aico_battery_out", condition="True"), WorkflowEdge(source="aico_check_1f", target="aico_check_2f", condition="False"), WorkflowEdge(source="aico_check_2f", target="aico_fault_out", condition="True"), WorkflowEdge(source="aico_check_2f", target="aico_eol_out", condition="False"), WorkflowEdge(source="aico_check_yellow", target="aico_normal_out", condition="False")])
+    def _question(node_id: str, variable: str, question: str, options: list[dict]) -> WorkflowNode:
+        return WorkflowNode(
+            id=node_id,
+            type=WorkflowNodeType.QUESTION,
+            data={"group": "Aico", "question": question, "variable": variable, "options": options},
+        )
+
+    def _build_branch(prefix: str, questions: list[dict], summary: dict) -> tuple[list[WorkflowNode], list[WorkflowEdge]]:
+        nodes: list[WorkflowNode] = []
+        edges: list[WorkflowEdge] = []
+
+        for index, question in enumerate(questions):
+            q_id = f"{prefix}_q{index + 1}"
+            nodes.append(_question(q_id, question["variable"], question["question"], question["options"]))
+            if index > 0:
+                edges.append(WorkflowEdge(source=f"{prefix}_q{index}", target=q_id))
+
+        calc_id = f"{prefix}_calculate_score"
+        switch_id = f"{prefix}_risk_switch"
+        score_variable = f"{prefix}_score"
+        normalized_variable = f"{prefix}_normalized_score"
+        max_score = sum(
+            max(int(option.get("score", 0)) for option in question["options"])
+            for question in questions
+        )
+        safe_score_parts = " + ".join(
+            f"int({question['variable']}_score if '{question['variable']}_score' in locals() else 0)"
+            for question in questions
+        )
+        emergency_message = next(
+            (route["message"] for route in summary["routes"] if route["outcome"] == "emergency_dispatch"),
+            "Aico score indicates a likely live CO alarm.\n\n1. Evacuate immediately\n2. Open doors and windows\n3. Do not re-enter\n4. Call 999 if anyone feels unwell\n\nEmergency engineer dispatched.",
+        )
+        monitor_message = next(
+            (route["message"] for route in summary["routes"] if route["outcome"] in {"schedule_engineer", "monitor"}),
+            "Aico score is inconclusive.\n\nThis may be a false case or a true CO event. Ventilate the property, avoid fuel-burning appliances, and monitor the situation closely.",
+        )
+        guidance_message = next(
+            (route["message"] for route in summary["routes"] if route["outcome"] == "close_with_guidance"),
+            "Aico score fits a maintenance or non-emergency pattern.\n\nFollow the alarm guidance for battery, fault, end-of-life, or test status.",
+        )
+        nodes.append(
+            WorkflowNode(
+                id=calc_id,
+                type=WorkflowNodeType.CALCULATE,
+                data={
+                    "group": "Aico",
+                    "calculation": (
+                        f"{score_variable} = {safe_score_parts}\n"
+                        f"{normalized_variable} = round(({score_variable} / {max_score}), 3) if {max_score} else 0"
+                    ),
+                    "result_variable": normalized_variable,
+                },
+            )
+        )
+        nodes.append(
+            WorkflowNode(
+                id=switch_id,
+                type=WorkflowNodeType.SWITCH,
+                data={
+                    "group": "Aico",
+                    "variable": normalized_variable,
+                    "label": f"{prefix} risk routing",
+                    "cases": ["Emergency", "Monitor", "Guidance"],
+                },
+            )
+        )
+        nodes.extend(
+            [
+                WorkflowNode(id=f"{prefix}_emergency_out", type=WorkflowNodeType.DECISION, data={"group": "Aico", "outcome": "emergency_dispatch", "message": emergency_message}),
+                WorkflowNode(id=f"{prefix}_monitor_out", type=WorkflowNodeType.DECISION, data={"group": "Aico", "outcome": "monitor", "message": monitor_message}),
+                WorkflowNode(id=f"{prefix}_guidance_out", type=WorkflowNodeType.DECISION, data={"group": "Aico", "outcome": "close_with_guidance", "message": guidance_message}),
+            ]
+        )
+        edges.append(WorkflowEdge(source=f"{prefix}_q{len(questions)}", target=calc_id))
+        edges.append(WorkflowEdge(source=calc_id, target=switch_id))
+        edges.extend(
+            [
+                WorkflowEdge(source=switch_id, target=f"{prefix}_emergency_out", condition=f"{normalized_variable} >= 0.7"),
+                WorkflowEdge(source=switch_id, target=f"{prefix}_monitor_out", condition=f"{normalized_variable} >= 0.35"),
+                WorkflowEdge(source=switch_id, target=f"{prefix}_guidance_out"),
+            ]
+        )
+
+        return nodes, edges
+
+    model_options = [
+        {"label": "Ei3030", "score": 1},
+        {"label": "Ei3018", "score": 1},
+        {"label": "Ei3028", "score": 1},
+        {"label": "Ei207 / Ei208 Series", "score": 1},
+        {"label": "Not sure / another Aico model", "score": 1},
+    ]
+    nodes = [
+        WorkflowNode(
+            id="aico_model",
+            type=WorkflowNodeType.QUESTION,
+            data={"group": "Aico", "question": "Which Aico model is shown on the alarm?", "variable": "aico_model", "options": model_options},
+        ),
+        WorkflowNode(
+            id="aico_model_switch",
+            type=WorkflowNodeType.SWITCH,
+            data={
+                "group": "Aico",
+                "variable": "aico_model",
+                "label": "Aico model routing",
+                "cases": ["Ei3030", "Ei3018", "Ei3028", "Ei207 / Ei208 Series", "Not sure / another Aico model"],
+                "default": "Not sure / another Aico model",
+            },
+        ),
+        WorkflowNode(
+            id="aico_series_model",
+            type=WorkflowNodeType.QUESTION,
+            data={
+                "group": "Aico",
+                "question": "Which Ei207 / Ei208 model is it?",
+                "variable": "aico_series_model",
+                "options": [
+                    {"label": "Ei207 / Ei207D", "score": 1},
+                    {"label": "Ei208 / Ei208W", "score": 1},
+                    {"label": "Ei208WRF", "score": 1},
+                    {"label": "Ei208DW / Ei208DWRF", "score": 1},
+                    {"label": "Not sure", "score": 1},
+                ],
+            },
+        ),
+    ]
+    edges = [
+        WorkflowEdge(source="aico_model", target="aico_model_switch"),
+        WorkflowEdge(source="aico_model_switch", target="aico3030_q1", condition="aico_model == 'Ei3030'"),
+        WorkflowEdge(source="aico_model_switch", target="aico3018_q1", condition="aico_model == 'Ei3018'"),
+        WorkflowEdge(source="aico_model_switch", target="aico3028_q1", condition="aico_model == 'Ei3028'"),
+        WorkflowEdge(source="aico_model_switch", target="aico_series_model", condition="aico_model == 'Ei207 / Ei208 Series'"),
+        WorkflowEdge(source="aico_model_switch", target="aicogeneric_q1", condition="aico_model == 'Not sure / another Aico model'"),
+    ]
+    aico3030_nodes, aico3030_edges = _build_branch(
+        "aico3030",
+        [
+            {"variable": "aico3030_light", "question": "What light do you see?", "options": [{"label": "Red", "score": 10}, {"label": "Yellow", "score": 2}, {"label": "Green", "score": 1}, {"label": "Unknown", "score": 3}]},
+            {"variable": "aico3030_sound", "question": "What sound do you hear?", "options": [{"label": "3 slow pulses", "score": 20}, {"label": "Rapid fire", "score": 5}, {"label": "Single chirp", "score": 2}, {"label": "Silent", "score": 1}, {"label": "Unknown", "score": 3}]},
+            {"variable": "aico3030_count", "question": "How many beeps or flashes?", "options": [{"label": "1", "score": 1}, {"label": "2", "score": 2}, {"label": "3", "score": 4}, {"label": "4+", "score": 3}, {"label": "Unknown", "score": 2}]},
+            {"variable": "aico3030_timing", "question": "When does it repeat?", "options": [{"label": "Continuous", "score": 10}, {"label": "Every 48 sec", "score": 2}, {"label": "Normal", "score": 1}, {"label": "Unknown", "score": 3}]},
+            {"variable": "aico3030_summary", "question": "Which matches best?", "options": [{"label": "CO alarm", "score": 25}, {"label": "Fire alarm", "score": 5}, {"label": "Low battery", "score": 2}, {"label": "Sensor fault", "score": 2}, {"label": "End of life", "score": 2}, {"label": "Dust / maintenance", "score": 2}, {"label": "Normal", "score": 1}, {"label": "Not sure", "score": 8}]},
+        ],
+        {"variable": "aico3030_summary", "routes": [
+            {"label": "CO alarm", "outcome": "emergency_dispatch", "message": "Aico Ei3030 CO alarm reported.\n\n1. Evacuate immediately\n2. Open doors and windows\n3. Do not re-enter\n4. Call 999 if anyone feels unwell\n\nEmergency engineer dispatched."},
+            {"label": "Fire alarm", "outcome": "close_with_guidance", "message": "This sounds like the Ei3030 fire alarm rather than CO.\n\nCheck for smoke or fire and call 999 if there is any fire risk."},
+            {"label": "Low battery", "outcome": "close_with_guidance", "message": "Aico Ei3030 low battery warning reported.\n\nCheck mains power first. If mains is present, the backup battery is depleted and the alarm needs service or replacement."},
+            {"label": "Sensor fault", "outcome": "close_with_guidance", "message": "Aico Ei3030 sensor fault reported.\n\nReplace or service the unit because it may no longer detect correctly."},
+            {"label": "End of life", "outcome": "close_with_guidance", "message": "Aico Ei3030 end-of-life warning reported.\n\nReplace the alarm unit."},
+            {"label": "Dust / maintenance", "outcome": "close_with_guidance", "message": "Aico Ei3030 maintenance warning reported.\n\nClean the unit and replace it if the warning persists."},
+            {"label": "Normal", "outcome": "close_with_guidance", "message": "The Aico Ei3030 appears normal or in test mode. Press the test button to confirm operation."},
+            {"label": "Not sure", "outcome": "monitor", "message": "Because the Ei3030 pattern is unclear, ventilate the property, avoid fuel-burning appliances, and monitor the alarm closely. Escalate if it repeats or worsens."},
+        ]},
+    )
+    aico3018_nodes, aico3018_edges = _build_branch(
+        "aico3018",
+        [
+            {"variable": "aico3018_light", "question": "What light do you see?", "options": [{"label": "Red", "score": 5}, {"label": "Yellow", "score": 2}, {"label": "Green", "score": 1}, {"label": "Unknown", "score": 3}]},
+            {"variable": "aico3018_sound", "question": "What sound do you hear?", "options": [{"label": "Rapid fire", "score": 10}, {"label": "Single chirp", "score": 2}, {"label": "No sound", "score": 1}, {"label": "Unknown", "score": 3}]},
+            {"variable": "aico3018_count", "question": "How many beeps or flashes?", "options": [{"label": "1", "score": 1}, {"label": "2", "score": 2}, {"label": "3", "score": 3}, {"label": "4+", "score": 2}, {"label": "Unknown", "score": 2}]},
+            {"variable": "aico3018_timing", "question": "When does it repeat?", "options": [{"label": "Continuous", "score": 5}, {"label": "Every 48 sec", "score": 2}, {"label": "Normal", "score": 1}, {"label": "Unknown", "score": 3}]},
+            {"variable": "aico3018_summary", "question": "Which matches best?", "options": [{"label": "Fire alarm", "score": 10}, {"label": "Low battery", "score": 2}, {"label": "Sensor fault", "score": 2}, {"label": "End of life", "score": 2}, {"label": "Normal", "score": 1}, {"label": "Not sure", "score": 8}]},
+        ],
+        {"variable": "aico3018_summary", "routes": [
+            {"label": "Fire alarm", "outcome": "close_with_guidance", "message": "This sounds like the Aico Ei3018 fire or heat alarm.\n\nCheck for fire, smoke, or overheating appliances and call 999 if needed."},
+            {"label": "Low battery", "outcome": "close_with_guidance", "message": "Aico Ei3018 low battery warning reported.\n\nCheck mains power and replace or service the alarm if the warning continues."},
+            {"label": "Sensor fault", "outcome": "close_with_guidance", "message": "Aico Ei3018 sensor fault reported.\n\nThe unit should be serviced or replaced."},
+            {"label": "End of life", "outcome": "close_with_guidance", "message": "Aico Ei3018 end-of-life warning reported.\n\nReplace the alarm unit."},
+            {"label": "Normal", "outcome": "close_with_guidance", "message": "The Aico Ei3018 appears normal or in test mode. Press the test button to confirm operation."},
+            {"label": "Not sure", "outcome": "monitor", "message": "Because the Ei3018 pattern is unclear, keep the area ventilated and monitor the alarm closely. Escalate if it repeats."},
+        ]},
+    )
+    aico3028_nodes, aico3028_edges = _build_branch(
+        "aico3028",
+        [
+            {"variable": "aico3028_light", "question": "What light do you see?", "options": [{"label": "Red", "score": 10}, {"label": "Yellow", "score": 2}, {"label": "Green", "score": 1}, {"label": "Unknown", "score": 3}]},
+            {"variable": "aico3028_sound", "question": "What sound do you hear?", "options": [{"label": "3 slow pulses", "score": 20}, {"label": "Rapid fire", "score": 5}, {"label": "Single chirp", "score": 2}, {"label": "Silent", "score": 1}, {"label": "Unknown", "score": 3}]},
+            {"variable": "aico3028_count", "question": "How many beeps or flashes?", "options": [{"label": "1", "score": 1}, {"label": "2", "score": 2}, {"label": "3", "score": 4}, {"label": "4+", "score": 3}, {"label": "Unknown", "score": 2}]},
+            {"variable": "aico3028_timing", "question": "When does it repeat?", "options": [{"label": "Continuous", "score": 10}, {"label": "Every 48 sec", "score": 2}, {"label": "Normal", "score": 1}, {"label": "Unknown", "score": 3}]},
+            {"variable": "aico3028_summary", "question": "Which matches best?", "options": [{"label": "CO alarm", "score": 25}, {"label": "Fire alarm", "score": 5}, {"label": "Low battery", "score": 2}, {"label": "Sensor fault", "score": 2}, {"label": "End of life", "score": 2}, {"label": "Normal", "score": 1}, {"label": "Not sure", "score": 8}]},
+        ],
+        {"variable": "aico3028_summary", "routes": [
+            {"label": "CO alarm", "outcome": "emergency_dispatch", "message": "Aico Ei3028 CO alarm reported.\n\n1. Evacuate immediately\n2. Open doors and windows\n3. Do not re-enter\n4. Call 999 if anyone feels unwell\n\nEmergency engineer dispatched."},
+            {"label": "Fire alarm", "outcome": "close_with_guidance", "message": "This sounds like the Ei3028 fire alarm rather than CO.\n\nCheck for smoke or fire and call 999 if there is any fire risk."},
+            {"label": "Low battery", "outcome": "close_with_guidance", "message": "Aico Ei3028 low battery warning reported.\n\nCheck mains power and replace or service the alarm if the warning continues."},
+            {"label": "Sensor fault", "outcome": "close_with_guidance", "message": "Aico Ei3028 sensor fault reported.\n\nThe unit should be serviced or replaced."},
+            {"label": "End of life", "outcome": "close_with_guidance", "message": "Aico Ei3028 end-of-life warning reported.\n\nReplace the alarm unit."},
+            {"label": "Normal", "outcome": "close_with_guidance", "message": "The Aico Ei3028 appears normal or in test mode. Press the test button to confirm operation."},
+            {"label": "Not sure", "outcome": "monitor", "message": "Because the Ei3028 pattern is unclear, ventilate the property, avoid fuel-burning appliances, and monitor the alarm closely. Escalate if it repeats or worsens."},
+        ]},
+    )
+    aico208_nodes, aico208_edges = _build_branch(
+        "aico208",
+        [
+            {"variable": "aico208_light", "question": "What light do you see?", "options": [{"label": "Red", "score": 10}, {"label": "Yellow", "score": 2}, {"label": "Green", "score": 1}, {"label": "Unknown", "score": 3}]},
+            {"variable": "aico208_sound", "question": "What sound do you hear?", "options": [{"label": "Full CO alarm", "score": 20}, {"label": "Single chirp", "score": 2}, {"label": "No sound", "score": 1}, {"label": "Unknown", "score": 3}]},
+            {"variable": "aico208_count", "question": "How many beeps or flashes?", "options": [{"label": "1", "score": 1}, {"label": "2", "score": 2}, {"label": "3", "score": 4}, {"label": "4+", "score": 3}, {"label": "Unknown", "score": 2}]},
+            {"variable": "aico208_timing", "question": "When does it repeat?", "options": [{"label": "Continuous", "score": 10}, {"label": "Every 48 sec", "score": 2}, {"label": "Once a minute", "score": 5}, {"label": "Unknown", "score": 3}]},
+            {"variable": "aico208_summary", "question": "Which matches best?", "options": [{"label": "CO alarm", "score": 25}, {"label": "Alarm memory", "score": 12}, {"label": "Low battery", "score": 2}, {"label": "Sensor fault", "score": 2}, {"label": "End of life", "score": 2}, {"label": "Normal", "score": 1}, {"label": "Not sure", "score": 8}]},
+        ],
+        {"variable": "aico208_summary", "routes": [
+            {"label": "CO alarm", "outcome": "emergency_dispatch", "message": "Aico Ei207 / Ei208 CO alarm reported.\n\n1. Evacuate immediately\n2. Open doors and windows\n3. Do not re-enter\n4. Call 999 if anyone feels unwell\n\nEmergency engineer dispatched."},
+            {"label": "Alarm memory", "outcome": "monitor", "message": "Aico Ei207 / Ei208 alarm memory reported.\n\nCO may have been detected earlier. Ventilate the property, avoid fuel-burning appliances, and monitor conditions closely."},
+            {"label": "Low battery", "outcome": "close_with_guidance", "message": "Aico Ei207 / Ei208 low battery warning reported.\n\nEi207 models use AAA batteries. Ei208 sealed-life models should be replaced rather than re-batteried."},
+            {"label": "Sensor fault", "outcome": "close_with_guidance", "message": "Aico Ei207 / Ei208 sensor fault reported.\n\nReplace the alarm because it may no longer detect CO reliably."},
+            {"label": "End of life", "outcome": "close_with_guidance", "message": "Aico Ei207 / Ei208 end-of-life warning reported.\n\nReplace the alarm unit."},
+            {"label": "Normal", "outcome": "close_with_guidance", "message": "The Aico Ei207 / Ei208 alarm appears normal or in test mode. Press the test button to confirm operation."},
+            {"label": "Not sure", "outcome": "monitor", "message": "Because the Ei207 / Ei208 pattern is unclear, ventilate the property, avoid fuel-burning appliances, and monitor the alarm closely. Escalate if it repeats or worsens."},
+        ]},
+    )
+    aicogeneric_nodes, aicogeneric_edges = _build_branch(
+        "aicogeneric",
+        [
+            {"variable": "aicogeneric_light", "question": "What light do you see?", "options": [{"label": "Red", "score": 10}, {"label": "Yellow", "score": 2}, {"label": "Green", "score": 1}, {"label": "Unknown", "score": 3}]},
+            {"variable": "aicogeneric_sound", "question": "What sound do you hear?", "options": [{"label": "3 slow pulses", "score": 20}, {"label": "Rapid fire", "score": 8}, {"label": "Single chirp", "score": 2}, {"label": "Silent", "score": 1}, {"label": "Unknown", "score": 3}]},
+            {"variable": "aicogeneric_count", "question": "How many beeps or flashes?", "options": [{"label": "1", "score": 1}, {"label": "2", "score": 2}, {"label": "3", "score": 4}, {"label": "4+", "score": 3}, {"label": "Unknown", "score": 2}]},
+            {"variable": "aicogeneric_timing", "question": "When does it repeat?", "options": [{"label": "Continuous", "score": 10}, {"label": "Every 48 sec", "score": 2}, {"label": "Once a minute", "score": 5}, {"label": "Normal", "score": 1}, {"label": "Unknown", "score": 3}]},
+            {"variable": "aicogeneric_summary", "question": "Which matches best?", "options": [{"label": "CO alarm", "score": 25}, {"label": "Fire alarm", "score": 8}, {"label": "Alarm memory", "score": 12}, {"label": "Low battery", "score": 2}, {"label": "Sensor fault", "score": 2}, {"label": "End of life", "score": 2}, {"label": "Normal", "score": 1}, {"label": "Not sure", "score": 8}]},
+        ],
+        {"variable": "aicogeneric_summary", "routes": [
+            {"label": "CO alarm", "outcome": "emergency_dispatch", "message": "Generic Aico CO alarm pattern reported.\n\n1. Evacuate immediately\n2. Open doors and windows\n3. Do not re-enter\n4. Call 999 if anyone feels unwell\n\nEmergency engineer dispatched."},
+            {"label": "Fire alarm", "outcome": "close_with_guidance", "message": "This sounds more like an Aico fire alarm than a CO-only alarm.\n\nCheck for smoke or fire and call 999 if there is any fire risk."},
+            {"label": "Alarm memory", "outcome": "monitor", "message": "The Aico alarm may be showing alarm memory from an earlier event.\n\nVentilate the property, avoid fuel-burning appliances, and monitor conditions closely."},
+            {"label": "Low battery", "outcome": "close_with_guidance", "message": "This Aico pattern sounds like a low battery warning rather than a live CO alarm.\n\nReplace the battery if the model uses replaceable cells, or replace the alarm if it is sealed-life."},
+            {"label": "Sensor fault", "outcome": "close_with_guidance", "message": "This Aico pattern sounds like a sensor fault.\n\nReplace or service the alarm because it may no longer detect correctly."},
+            {"label": "End of life", "outcome": "close_with_guidance", "message": "This Aico pattern sounds like end-of-life.\n\nReplace the alarm unit."},
+            {"label": "Normal", "outcome": "close_with_guidance", "message": "The Aico alarm sounds normal or in test mode. Press the test button to confirm operation."},
+            {"label": "Not sure", "outcome": "monitor", "message": "Because the Aico model and pattern are unclear, ventilate the property, avoid fuel-burning appliances, and monitor the alarm closely. Escalate if it repeats or worsens."},
+        ]},
+    )
+    nodes.extend(aico3030_nodes + aico3018_nodes + aico3028_nodes + aico208_nodes + aicogeneric_nodes)
+    edges.extend(aico3030_edges + aico3018_edges + aico3028_edges + aico208_edges + aicogeneric_edges)
+    edges.append(WorkflowEdge(source="aico_series_model", target="aico208_q1"))
+    return _build_manufacturer_workflow(tenant_id, CO_ALARM_SUBFLOW_AICO, "aico_model", nodes, edges)
 
 
 def _create_co_alarm_kidde_workflow(tenant_id: str) -> WorkflowDefinition:
-    return _build_manufacturer_workflow(tenant_id, CO_ALARM_SUBFLOW_KIDDE, "kidde_q1", [WorkflowNode(id="kidde_q1", type=WorkflowNodeType.QUESTION, data={"group": "Kidde", "question": "What colour light is flashing on your Kidde alarm?", "variable": "kidde_led", "options": [{"label": "Red", "score": 20}, {"label": "Amber", "score": 0}, {"label": "Green", "score": 0}, {"label": "No light", "score": 3}]}), WorkflowNode(id="kidde_check_red", type=WorkflowNodeType.CONDITION, data={"group": "Kidde", "expression": "kidde_led == 'Red'"}), WorkflowNode(id="kidde_q2_red", type=WorkflowNodeType.QUESTION, data={"group": "Kidde", "question": "Is your Kidde alarm beeping loudly?", "variable": "kidde_red_sound", "options": [{"label": "Yes - 4 quick beeps repeating", "score": 25}, {"label": "No sound (red light blinking slowly)", "score": 10}]}), WorkflowNode(id="kidde_check_co", type=WorkflowNodeType.CONDITION, data={"group": "Kidde", "expression": "kidde_red_sound == 'Yes - 4 quick beeps repeating'"}), WorkflowNode(id="kidde_co_out", type=WorkflowNodeType.DECISION, data={"group": "Kidde", "outcome": "emergency_dispatch", "message": "CO DETECTED by your Kidde alarm.\n\n1. Evacuate NOW\n2. Open doors/windows\n3. Do NOT re-enter\n4. Call 999 if unwell\n\nEngineer dispatched. Kidde Support: 0800 917 0722"}), WorkflowNode(id="kidde_memory_out", type=WorkflowNodeType.DECISION, data={"group": "Kidde", "outcome": "schedule_engineer", "message": "Your Kidde alarm detected CO in the last 14 days.\n\n1. Ventilate the property\n2. Don't use gas appliances\n3. Press test button to clear\n\nEngineer will investigate."}), WorkflowNode(id="kidde_check_amber", type=WorkflowNodeType.CONDITION, data={"group": "Kidde", "expression": "kidde_led == 'Amber'"}), WorkflowNode(id="kidde_q2_amber", type=WorkflowNodeType.QUESTION, data={"group": "Kidde", "question": "How many amber flashes before a pause?", "variable": "kidde_amber_count", "options": [{"label": "1 flash", "score": 0}, {"label": "2 flashes", "score": 0}, {"label": "5 flashes (fast)", "score": 0}]}), WorkflowNode(id="kidde_check_1f", type=WorkflowNodeType.CONDITION, data={"group": "Kidde", "expression": "kidde_amber_count == '1 flash'"}), WorkflowNode(id="kidde_battery_out", type=WorkflowNodeType.DECISION, data={"group": "Kidde", "outcome": "close_with_guidance", "message": "LOW BATTERY (not CO).\n\nReplace 2x AA batteries (or entire alarm if sealed).\nPress test button to silence for 24 hours.\nNo engineer visit needed."}), WorkflowNode(id="kidde_check_2f", type=WorkflowNodeType.CONDITION, data={"group": "Kidde", "expression": "kidde_amber_count == '2 flashes'"}), WorkflowNode(id="kidde_eol_out", type=WorkflowNodeType.DECISION, data={"group": "Kidde", "outcome": "close_with_guidance", "message": "END OF UNIT LIFE (10 years).\nReplace the alarm. No engineer visit needed."}), WorkflowNode(id="kidde_fault_out", type=WorkflowNodeType.DECISION, data={"group": "Kidde", "outcome": "close_with_guidance", "message": "SENSOR FAULT.\nClean the alarm and press test. If fault persists, replace.\nNo engineer visit needed."}), WorkflowNode(id="kidde_normal_out", type=WorkflowNodeType.DECISION, data={"group": "Kidde", "outcome": "close_with_guidance", "message": "Alarm appears normal. Press test button to confirm.\nIf it sounds again, call us back."})], [WorkflowEdge(source="kidde_q1", target="kidde_check_red"), WorkflowEdge(source="kidde_check_red", target="kidde_q2_red", condition="True"), WorkflowEdge(source="kidde_q2_red", target="kidde_check_co"), WorkflowEdge(source="kidde_check_co", target="kidde_co_out", condition="True"), WorkflowEdge(source="kidde_check_co", target="kidde_memory_out", condition="False"), WorkflowEdge(source="kidde_check_red", target="kidde_check_amber", condition="False"), WorkflowEdge(source="kidde_check_amber", target="kidde_q2_amber", condition="True"), WorkflowEdge(source="kidde_q2_amber", target="kidde_check_1f"), WorkflowEdge(source="kidde_check_1f", target="kidde_battery_out", condition="True"), WorkflowEdge(source="kidde_check_1f", target="kidde_check_2f", condition="False"), WorkflowEdge(source="kidde_check_2f", target="kidde_eol_out", condition="True"), WorkflowEdge(source="kidde_check_2f", target="kidde_fault_out", condition="False"), WorkflowEdge(source="kidde_check_amber", target="kidde_normal_out", condition="False")])
+    def _question(node_id: str, variable: str, question: str, options: list[dict]) -> WorkflowNode:
+        return WorkflowNode(
+            id=node_id,
+            type=WorkflowNodeType.QUESTION,
+            data={"group": "Kidde", "question": question, "variable": variable, "options": options},
+        )
+
+    def _build_branch(prefix: str, questions: list[dict], messages: dict, label: str | None = None) -> tuple[list[WorkflowNode], list[WorkflowEdge]]:
+        nodes: list[WorkflowNode] = []
+        edges: list[WorkflowEdge] = []
+
+        for index, question in enumerate(questions):
+            q_id = f"{prefix}_q{index + 1}"
+            nodes.append(_question(q_id, question["variable"], question["question"], question["options"]))
+            if index > 0:
+                edges.append(WorkflowEdge(source=f"{prefix}_q{index}", target=q_id))
+
+        calc_id = f"{prefix}_calculate_score"
+        switch_id = f"{prefix}_risk_switch"
+        score_variable = f"{prefix}_score"
+        normalized_variable = f"{prefix}_normalized_score"
+        max_score = sum(
+            max(int(option.get("score", 0)) for option in question["options"])
+            for question in questions
+        )
+        safe_score_parts = " + ".join(
+            f"int({question['variable']}_score if '{question['variable']}_score' in locals() else 0)"
+            for question in questions
+        )
+
+        nodes.append(
+            WorkflowNode(
+                id=calc_id,
+                type=WorkflowNodeType.CALCULATE,
+                data={
+                    "group": "Kidde",
+                    "calculation": (
+                        f"{score_variable} = {safe_score_parts}\n"
+                        f"{normalized_variable} = round(({score_variable} / {max_score}), 3) if {max_score} else 0"
+                    ),
+                    "result_variable": normalized_variable,
+                },
+            )
+        )
+        nodes.append(
+            WorkflowNode(
+                id=switch_id,
+                type=WorkflowNodeType.SWITCH,
+                data={
+                    "group": "Kidde",
+                    "variable": normalized_variable,
+                    "label": f"{label or prefix} risk routing",
+                    "cases": ["Emergency", "Monitor", "Guidance"],
+                },
+            )
+        )
+        nodes.extend(
+            [
+                WorkflowNode(id=f"{prefix}_emergency_out", type=WorkflowNodeType.DECISION, data={"group": "Kidde", "outcome": "emergency_dispatch", "message": messages["emergency"]}),
+                WorkflowNode(id=f"{prefix}_monitor_out", type=WorkflowNodeType.DECISION, data={"group": "Kidde", "outcome": "monitor", "message": messages["monitor"]}),
+                WorkflowNode(id=f"{prefix}_guidance_out", type=WorkflowNodeType.DECISION, data={"group": "Kidde", "outcome": "close_with_guidance", "message": messages["guidance"]}),
+            ]
+        )
+        edges.append(WorkflowEdge(source=f"{prefix}_q{len(questions)}", target=calc_id))
+        edges.append(WorkflowEdge(source=calc_id, target=switch_id))
+        edges.extend(
+            [
+                WorkflowEdge(source=switch_id, target=f"{prefix}_emergency_out", condition=f"{normalized_variable} >= 0.7"),
+                WorkflowEdge(source=switch_id, target=f"{prefix}_monitor_out", condition=f"{normalized_variable} >= 0.35"),
+                WorkflowEdge(source=switch_id, target=f"{prefix}_guidance_out"),
+            ]
+        )
+        return nodes, edges
+
+    def _base_questions(prefix: str, model_label: str) -> list[dict]:
+        return [
+            {"variable": f"{prefix}_light", "question": f"What light do you see on {model_label}?", "options": [{"label": "Red", "score": 12}, {"label": "Amber / yellow", "score": 4}, {"label": "Green", "score": 1}, {"label": "No light", "score": 2}, {"label": "Not sure", "score": 6}]},
+            {"variable": f"{prefix}_sound", "question": f"What sound do you hear from {model_label}?", "options": [{"label": "4 quick beeps", "score": 25}, {"label": "Single chirp", "score": 2}, {"label": "2 warning chirps", "score": 4}, {"label": "5 fast chirps", "score": 5}, {"label": "Silent", "score": 1}, {"label": "Not sure", "score": 6}]},
+            {"variable": f"{prefix}_now", "question": "What best describes it now?", "options": [{"label": "Alarm sounding now", "score": 16}, {"label": "Warning only", "score": 10}, {"label": "Just chirping", "score": 3}, {"label": "Normal", "score": 1}, {"label": "Not sure", "score": 6}]},
+            {"variable": f"{prefix}_pattern", "question": "How often does it happen?", "options": [{"label": "Keeps repeating", "score": 14}, {"label": "About every minute", "score": 4}, {"label": "Normal", "score": 1}, {"label": "Not sure", "score": 6}]},
+            {"variable": f"{prefix}_issue", "question": "What does it seem like?", "options": [{"label": "Possible CO alarm", "score": 20}, {"label": "Low battery", "score": 2}, {"label": "End of life", "score": 5}, {"label": "Fault", "score": 4}, {"label": "Normal", "score": 1}, {"label": "Not sure", "score": 6}]},
+        ]
+
+    model_specs = [
+        ("kidde1", "2030-DCR"),
+        ("kidde2", "K5CO"),
+        ("kidde3", "K5DCO"),
+        ("kidde4", "K7CO"),
+        ("kidde5", "K7DCO"),
+        ("kidde6", "K10LLCO"),
+        ("kidde7", "K10LLDCO"),
+        ("kidde8", "KCOSAC2"),
+        ("kidde9", "K4MCO"),
+        ("kidde10", "K10SCO"),
+    ]
+
+    nodes = [
+        WorkflowNode(
+            id="kidde_model",
+            type=WorkflowNodeType.QUESTION,
+            data={
+                "group": "Kidde",
+                "question": "Which Kidde model is shown?",
+                "variable": "kidde_model",
+                "options": [
+                    {"label": "2030-DCR", "score": 1},
+                    {"label": "K5CO", "score": 1},
+                    {"label": "K5DCO", "score": 1},
+                    {"label": "K7CO", "score": 1},
+                    {"label": "K7DCO", "score": 1},
+                    {"label": "K10LLCO", "score": 1},
+                    {"label": "K10LLDCO", "score": 1},
+                    {"label": "KCOSAC2", "score": 1},
+                    {"label": "K4MCO", "score": 1},
+                    {"label": "K10SCO", "score": 1},
+                    {"label": "Not sure / another Kidde model", "score": 1},
+                ],
+            },
+        ),
+        WorkflowNode(
+            id="kidde_model_switch",
+            type=WorkflowNodeType.SWITCH,
+            data={
+                "group": "Kidde",
+                "variable": "kidde_model",
+                "label": "Kidde model routing",
+                "cases": ["2030-DCR", "K5CO", "K5DCO", "K7CO", "K7DCO", "K10LLCO", "K10LLDCO", "KCOSAC2", "K4MCO", "K10SCO", "Not sure / another Kidde model"],
+                "default": "Not sure / another Kidde model",
+            },
+        ),
+    ]
+    edges = [WorkflowEdge(source="kidde_model", target="kidde_model_switch")]
+
+    branch_specs: list[tuple[str, list[dict], dict, str, str]] = []
+    for idx, (prefix, label) in enumerate(model_specs, start=1):
+        questions = _base_questions(prefix, label)
+        branch_specs.append(
+            (
+                prefix,
+                questions,
+                {
+                    "emergency": f"Kidde {label} score indicates a likely live CO alarm.\n\n1. Evacuate immediately\n2. Open doors and windows\n3. Do not re-enter\n4. Call 999 if anyone feels unwell\n\nEmergency engineer dispatched.",
+                    "monitor": f"Kidde {label} score is inconclusive.\n\nVentilate the property, avoid fuel-burning appliances, and monitor the alarm closely.",
+                    "guidance": f"Kidde {label} score fits a maintenance or non-emergency pattern.\n\nFollow the model guidance for battery, fault, end-of-life, or test status.",
+                },
+                label,
+                label,
+            )
+        )
+        edges.append(WorkflowEdge(source="kidde_model_switch", target=f"{prefix}_q1", condition=f"kidde_model == '{label}'"))
+
+    kiddegeneric_questions = _base_questions("kiddegeneric", "this Kidde alarm")
+    branch_specs.append(
+        (
+            "kiddegeneric",
+            kiddegeneric_questions,
+            {
+                "emergency": "Generic Kidde score indicates a likely live CO alarm.\n\n1. Evacuate immediately\n2. Open doors and windows\n3. Do not re-enter\n4. Call 999 if anyone feels unwell\n\nEmergency engineer dispatched.",
+                "monitor": "Generic Kidde score is inconclusive.\n\nVentilate the property, avoid fuel-burning appliances, and monitor the alarm closely.",
+                "guidance": "Generic Kidde score fits a maintenance or non-emergency pattern.\n\nFollow the alarm guidance for battery, fault, end-of-life, or test status.",
+            },
+            "Unknown Kidde",
+            "Not sure / another Kidde model",
+        )
+    )
+    edges.append(WorkflowEdge(source="kidde_model_switch", target="kiddegeneric_q1", condition="kidde_model == 'Not sure / another Kidde model'"))
+
+    for prefix, questions, messages, ui_label, _selection in branch_specs:
+        branch_nodes, branch_edges = _build_branch(prefix, questions, messages, ui_label)
+        nodes.extend(branch_nodes)
+        edges.extend(branch_edges)
+
+    return _build_manufacturer_workflow(tenant_id, CO_ALARM_SUBFLOW_KIDDE, "kidde_model", nodes, edges)
 
 
 def _create_co_alarm_xsense_workflow(tenant_id: str) -> WorkflowDefinition:
-    return _build_manufacturer_workflow(tenant_id, CO_ALARM_SUBFLOW_XSENSE, "xs_q1", [WorkflowNode(id="xs_q1", type=WorkflowNodeType.QUESTION, data={"group": "X-Sense", "question": "What colour light is showing on your X-Sense alarm?", "variable": "xs_led", "options": [{"label": "Red (flashing)", "score": 20}, {"label": "Red (steady, not flashing)", "score": 10}, {"label": "Yellow", "score": 0}, {"label": "Green", "score": 0}]}), WorkflowNode(id="xs_check_red_flash", type=WorkflowNodeType.CONDITION, data={"group": "X-Sense", "expression": "xs_led == 'Red (flashing)'"}), WorkflowNode(id="xs_co_out", type=WorkflowNodeType.DECISION, data={"group": "X-Sense", "outcome": "emergency_dispatch", "message": "CO DETECTED by your X-Sense alarm.\n\n1. Evacuate NOW\n2. Open doors/windows\n3. Do NOT re-enter\n4. Call 999 if unwell\n\nNote: Cannot silence if CO > 300 ppm.\nEngineer dispatched."}), WorkflowNode(id="xs_check_red_steady", type=WorkflowNodeType.CONDITION, data={"group": "X-Sense", "expression": "xs_led == 'Red (steady, not flashing)'"}), WorkflowNode(id="xs_silenced_out", type=WorkflowNodeType.DECISION, data={"group": "X-Sense", "outcome": "schedule_engineer", "message": "Alarm was silenced but CO may still be present.\nIt will re-activate after 9 minutes if CO > 50 ppm.\n\n1. Ventilate the property\n2. Don't use gas appliances\n\nEngineer will investigate."}), WorkflowNode(id="xs_check_yellow", type=WorkflowNodeType.CONDITION, data={"group": "X-Sense", "expression": "xs_led == 'Yellow'"}), WorkflowNode(id="xs_q2_yellow", type=WorkflowNodeType.QUESTION, data={"group": "X-Sense", "question": "How many yellow flashes before each pause?", "variable": "xs_flashes", "options": [{"label": "1 flash", "score": 0}, {"label": "3 flashes", "score": 0}]}), WorkflowNode(id="xs_check_1f", type=WorkflowNodeType.CONDITION, data={"group": "X-Sense", "expression": "xs_flashes == '1 flash'"}), WorkflowNode(id="xs_battery_out", type=WorkflowNodeType.DECISION, data={"group": "X-Sense", "outcome": "close_with_guidance", "message": "LOW BATTERY (not CO).\nReplace CR123A battery. LCD shows 'Lb' when low.\nNo engineer visit needed."}), WorkflowNode(id="xs_eol_out", type=WorkflowNodeType.DECISION, data={"group": "X-Sense", "outcome": "close_with_guidance", "message": "END OF ALARM LIFE (10 years).\nPress test to silence for 22 hours (max 30 days).\nReplace the alarm. No engineer visit needed."}), WorkflowNode(id="xs_normal_out", type=WorkflowNodeType.DECISION, data={"group": "X-Sense", "outcome": "close_with_guidance", "message": "Alarm appears normal. Press test button to confirm.\nIf it sounds again, call us back."})], [WorkflowEdge(source="xs_q1", target="xs_check_red_flash"), WorkflowEdge(source="xs_check_red_flash", target="xs_co_out", condition="True"), WorkflowEdge(source="xs_check_red_flash", target="xs_check_red_steady", condition="False"), WorkflowEdge(source="xs_check_red_steady", target="xs_silenced_out", condition="True"), WorkflowEdge(source="xs_check_red_steady", target="xs_check_yellow", condition="False"), WorkflowEdge(source="xs_check_yellow", target="xs_q2_yellow", condition="True"), WorkflowEdge(source="xs_q2_yellow", target="xs_check_1f"), WorkflowEdge(source="xs_check_1f", target="xs_battery_out", condition="True"), WorkflowEdge(source="xs_check_1f", target="xs_eol_out", condition="False"), WorkflowEdge(source="xs_check_yellow", target="xs_normal_out", condition="False")])
+    def _question(node_id: str, variable: str, question: str, options: list[dict]) -> WorkflowNode:
+        return WorkflowNode(
+            id=node_id,
+            type=WorkflowNodeType.QUESTION,
+            data={"group": "X-Sense", "question": question, "variable": variable, "options": options},
+        )
+
+    def _build_branch(prefix: str, questions: list[dict], messages: dict, label: str | None = None) -> tuple[list[WorkflowNode], list[WorkflowEdge]]:
+        nodes: list[WorkflowNode] = []
+        edges: list[WorkflowEdge] = []
+
+        for index, question in enumerate(questions):
+            q_id = f"{prefix}_q{index + 1}"
+            nodes.append(_question(q_id, question["variable"], question["question"], question["options"]))
+            if index > 0:
+                edges.append(WorkflowEdge(source=f"{prefix}_q{index}", target=q_id))
+
+        calc_id = f"{prefix}_calculate_score"
+        switch_id = f"{prefix}_risk_switch"
+        score_variable = f"{prefix}_score"
+        normalized_variable = f"{prefix}_normalized_score"
+        max_score = sum(
+            max(int(option.get("score", 0)) for option in question["options"])
+            for question in questions
+        )
+        safe_score_parts = " + ".join(
+            f"int({question['variable']}_score if '{question['variable']}_score' in locals() else 0)"
+            for question in questions
+        )
+
+        nodes.append(
+            WorkflowNode(
+                id=calc_id,
+                type=WorkflowNodeType.CALCULATE,
+                data={
+                    "group": "X-Sense",
+                    "calculation": (
+                        f"{score_variable} = {safe_score_parts}\n"
+                        f"{normalized_variable} = round(({score_variable} / {max_score}), 3) if {max_score} else 0"
+                    ),
+                    "result_variable": normalized_variable,
+                },
+            )
+        )
+        nodes.append(
+            WorkflowNode(
+                id=switch_id,
+                type=WorkflowNodeType.SWITCH,
+                data={
+                    "group": "X-Sense",
+                    "variable": normalized_variable,
+                    "label": f"{label or prefix} risk routing",
+                    "cases": ["Emergency", "Monitor", "Guidance"],
+                },
+            )
+        )
+        nodes.extend(
+            [
+                WorkflowNode(id=f"{prefix}_emergency_out", type=WorkflowNodeType.DECISION, data={"group": "X-Sense", "outcome": "emergency_dispatch", "message": messages["emergency"]}),
+                WorkflowNode(id=f"{prefix}_monitor_out", type=WorkflowNodeType.DECISION, data={"group": "X-Sense", "outcome": "monitor", "message": messages["monitor"]}),
+                WorkflowNode(id=f"{prefix}_guidance_out", type=WorkflowNodeType.DECISION, data={"group": "X-Sense", "outcome": "close_with_guidance", "message": messages["guidance"]}),
+            ]
+        )
+        edges.append(WorkflowEdge(source=f"{prefix}_q{len(questions)}", target=calc_id))
+        edges.append(WorkflowEdge(source=calc_id, target=switch_id))
+        edges.extend(
+            [
+                WorkflowEdge(source=switch_id, target=f"{prefix}_emergency_out", condition=f"{normalized_variable} >= 0.7"),
+                WorkflowEdge(source=switch_id, target=f"{prefix}_monitor_out", condition=f"{normalized_variable} >= 0.35"),
+                WorkflowEdge(source=switch_id, target=f"{prefix}_guidance_out"),
+            ]
+        )
+        return nodes, edges
+
+    xc01m_questions = [
+        {"variable": "xc01m_light", "question": "What light do you see?", "options": [{"label": "Red flashing", "score": 12}, {"label": "Red steady", "score": 8}, {"label": "Yellow flashing", "score": 4}, {"label": "Green flash", "score": 1}, {"label": "Not sure", "score": 6}]},
+        {"variable": "xc01m_sound", "question": "What sound do you hear?", "options": [{"label": "4 loud beeps", "score": 25}, {"label": "Single chirp", "score": 2}, {"label": "3 warning beeps", "score": 5}, {"label": "Silent", "score": 1}, {"label": "Not sure", "score": 6}]},
+        {"variable": "xc01m_now", "question": "What best describes it now?", "options": [{"label": "Alarm sounding now", "score": 16}, {"label": "Silenced but was alarming", "score": 10}, {"label": "Just a warning chirp", "score": 3}, {"label": "Normal", "score": 1}, {"label": "Not sure", "score": 6}]},
+        {"variable": "xc01m_repeat", "question": "How often does it happen?", "options": [{"label": "Keeps repeating", "score": 14}, {"label": "About every minute", "score": 4}, {"label": "Normal", "score": 1}, {"label": "Not sure", "score": 6}]},
+        {"variable": "xc01m_issue", "question": "What does it seem like?", "options": [{"label": "Possible CO alarm", "score": 20}, {"label": "Low battery", "score": 2}, {"label": "End of life", "score": 5}, {"label": "Fault", "score": 4}, {"label": "Normal", "score": 1}, {"label": "Not sure", "score": 6}]},
+    ]
+    xc04wx_questions = [
+        {"variable": "xc04wx_light", "question": "What light do you see?", "options": [{"label": "Red flashing", "score": 12}, {"label": "Red steady", "score": 8}, {"label": "Yellow flashing", "score": 4}, {"label": "Green flash", "score": 1}, {"label": "Not sure", "score": 6}]},
+        {"variable": "xc04wx_sound", "question": "What sound do you hear?", "options": [{"label": "4 loud beeps", "score": 25}, {"label": "Single chirp", "score": 2}, {"label": "3 warning beeps", "score": 5}, {"label": "Silent", "score": 1}, {"label": "Not sure", "score": 6}]},
+        {"variable": "xc04wx_now", "question": "What best describes it now?", "options": [{"label": "Alarm sounding now", "score": 16}, {"label": "Silenced but was alarming", "score": 10}, {"label": "Just a warning chirp", "score": 3}, {"label": "Normal", "score": 1}, {"label": "Not sure", "score": 6}]},
+        {"variable": "xc04wx_repeat", "question": "How often does it happen?", "options": [{"label": "Keeps repeating", "score": 14}, {"label": "About every minute", "score": 4}, {"label": "Normal", "score": 1}, {"label": "Not sure", "score": 6}]},
+        {"variable": "xc04wx_issue", "question": "What does it seem like?", "options": [{"label": "Possible CO alarm", "score": 20}, {"label": "Low battery", "score": 2}, {"label": "End of life", "score": 5}, {"label": "Fault", "score": 4}, {"label": "Normal", "score": 1}, {"label": "Not sure", "score": 6}]},
+    ]
+    xc01r_questions = [
+        {"variable": "xc01r_light", "question": "What light do you see?", "options": [{"label": "Red flashing", "score": 12}, {"label": "Red steady", "score": 8}, {"label": "Yellow flashing", "score": 4}, {"label": "Green flash", "score": 1}, {"label": "Not sure", "score": 6}]},
+        {"variable": "xc01r_sound", "question": "What sound do you hear?", "options": [{"label": "4 loud beeps", "score": 25}, {"label": "Single chirp", "score": 2}, {"label": "3 warning beeps", "score": 5}, {"label": "Silent", "score": 1}, {"label": "Not sure", "score": 6}]},
+        {"variable": "xc01r_now", "question": "What best describes it now?", "options": [{"label": "Alarm sounding now", "score": 16}, {"label": "Silenced but was alarming", "score": 10}, {"label": "Just a warning chirp", "score": 3}, {"label": "Normal", "score": 1}, {"label": "Not sure", "score": 6}]},
+        {"variable": "xc01r_repeat", "question": "How often does it happen?", "options": [{"label": "Keeps repeating", "score": 14}, {"label": "About every minute", "score": 4}, {"label": "Normal", "score": 1}, {"label": "Not sure", "score": 6}]},
+        {"variable": "xc01r_issue", "question": "What does it seem like?", "options": [{"label": "Possible CO alarm", "score": 20}, {"label": "Low battery", "score": 2}, {"label": "End of life", "score": 5}, {"label": "Fault", "score": 4}, {"label": "Normal", "score": 1}, {"label": "Not sure", "score": 6}]},
+    ]
+    xc0c_questions = [
+        {"variable": "xc0c_light", "question": "What light do you see?", "options": [{"label": "Red flashing", "score": 12}, {"label": "Red steady", "score": 8}, {"label": "Yellow flashing", "score": 4}, {"label": "Green flash", "score": 1}, {"label": "Not sure", "score": 6}]},
+        {"variable": "xc0c_sound", "question": "What sound do you hear?", "options": [{"label": "4 loud beeps", "score": 25}, {"label": "Single chirp", "score": 2}, {"label": "3 warning beeps", "score": 5}, {"label": "Silent", "score": 1}, {"label": "Not sure", "score": 6}]},
+        {"variable": "xc0c_now", "question": "What best describes it now?", "options": [{"label": "Alarm sounding now", "score": 16}, {"label": "Silenced but was alarming", "score": 10}, {"label": "Just a warning chirp", "score": 3}, {"label": "Normal", "score": 1}, {"label": "Not sure", "score": 6}]},
+        {"variable": "xc0c_repeat", "question": "How often does it happen?", "options": [{"label": "Keeps repeating", "score": 14}, {"label": "About every minute", "score": 4}, {"label": "Normal", "score": 1}, {"label": "Not sure", "score": 6}]},
+        {"variable": "xc0c_issue", "question": "What does it seem like?", "options": [{"label": "Possible CO alarm", "score": 20}, {"label": "Low battery", "score": 2}, {"label": "End of life", "score": 5}, {"label": "Fault", "score": 4}, {"label": "Normal", "score": 1}, {"label": "Not sure", "score": 6}]},
+    ]
+    sc07wx_questions = [
+        {"variable": "sc07wx_light", "question": "What light do you see?", "options": [{"label": "Red flashing", "score": 12}, {"label": "Red steady", "score": 8}, {"label": "Yellow flashing", "score": 4}, {"label": "Green flash", "score": 1}, {"label": "Not sure", "score": 6}]},
+        {"variable": "sc07wx_sound", "question": "What sound do you hear?", "options": [{"label": "4 loud beeps", "score": 25}, {"label": "Single chirp", "score": 2}, {"label": "3 warning beeps", "score": 5}, {"label": "Silent", "score": 1}, {"label": "Not sure", "score": 6}]},
+        {"variable": "sc07wx_now", "question": "What best describes it now?", "options": [{"label": "Alarm sounding now", "score": 16}, {"label": "Silenced but was alarming", "score": 10}, {"label": "Just a warning chirp", "score": 3}, {"label": "Normal", "score": 1}, {"label": "Not sure", "score": 6}]},
+        {"variable": "sc07wx_repeat", "question": "How often does it happen?", "options": [{"label": "Keeps repeating", "score": 14}, {"label": "About every minute", "score": 4}, {"label": "Normal", "score": 1}, {"label": "Not sure", "score": 6}]},
+        {"variable": "sc07wx_issue", "question": "What does it seem like?", "options": [{"label": "Possible CO alarm", "score": 20}, {"label": "Low battery", "score": 2}, {"label": "End of life", "score": 5}, {"label": "Fault", "score": 4}, {"label": "Normal", "score": 1}, {"label": "Not sure", "score": 6}]},
+    ]
+    sc07_questions = [
+        {"variable": "sc07_light", "question": "What light do you see?", "options": [{"label": "Red flashing", "score": 12}, {"label": "Red steady", "score": 8}, {"label": "Yellow flashing", "score": 4}, {"label": "Green flash", "score": 1}, {"label": "Not sure", "score": 6}]},
+        {"variable": "sc07_sound", "question": "What sound do you hear?", "options": [{"label": "4 loud beeps", "score": 25}, {"label": "Single chirp", "score": 2}, {"label": "3 warning beeps", "score": 5}, {"label": "Silent", "score": 1}, {"label": "Not sure", "score": 6}]},
+        {"variable": "sc07_now", "question": "What best describes it now?", "options": [{"label": "Alarm sounding now", "score": 16}, {"label": "Silenced but was alarming", "score": 10}, {"label": "Just a warning chirp", "score": 3}, {"label": "Normal", "score": 1}, {"label": "Not sure", "score": 6}]},
+        {"variable": "sc07_repeat", "question": "How often does it happen?", "options": [{"label": "Keeps repeating", "score": 14}, {"label": "About every minute", "score": 4}, {"label": "Normal", "score": 1}, {"label": "Not sure", "score": 6}]},
+        {"variable": "sc07_issue", "question": "What does it seem like?", "options": [{"label": "Possible CO alarm", "score": 20}, {"label": "Low battery", "score": 2}, {"label": "End of life", "score": 5}, {"label": "Fault", "score": 4}, {"label": "Normal", "score": 1}, {"label": "Not sure", "score": 6}]},
+    ]
+    sc07w_questions = [
+        {"variable": "sc07w_light", "question": "What light do you see?", "options": [{"label": "Red flashing", "score": 12}, {"label": "Red steady", "score": 8}, {"label": "Yellow flashing", "score": 4}, {"label": "Green flash", "score": 1}, {"label": "Not sure", "score": 6}]},
+        {"variable": "sc07w_sound", "question": "What sound do you hear?", "options": [{"label": "4 loud beeps", "score": 25}, {"label": "Single chirp", "score": 2}, {"label": "3 warning beeps", "score": 5}, {"label": "Silent", "score": 1}, {"label": "Not sure", "score": 6}]},
+        {"variable": "sc07w_now", "question": "What best describes it now?", "options": [{"label": "Alarm sounding now", "score": 16}, {"label": "Silenced but was alarming", "score": 10}, {"label": "Just a warning chirp", "score": 3}, {"label": "Normal", "score": 1}, {"label": "Not sure", "score": 6}]},
+        {"variable": "sc07w_repeat", "question": "How often does it happen?", "options": [{"label": "Keeps repeating", "score": 14}, {"label": "About every minute", "score": 4}, {"label": "Normal", "score": 1}, {"label": "Not sure", "score": 6}]},
+        {"variable": "sc07w_issue", "question": "What does it seem like?", "options": [{"label": "Possible CO alarm", "score": 20}, {"label": "Low battery", "score": 2}, {"label": "End of life", "score": 5}, {"label": "Fault", "score": 4}, {"label": "Normal", "score": 1}, {"label": "Not sure", "score": 6}]},
+    ]
+    xsgeneric_questions = [
+        {"variable": "xsgeneric_light", "question": "What light do you see?", "options": [{"label": "Red flashing", "score": 12}, {"label": "Red steady", "score": 8}, {"label": "Yellow flashing", "score": 4}, {"label": "Green flash", "score": 1}, {"label": "Not sure", "score": 6}]},
+        {"variable": "xsgeneric_sound", "question": "What sound do you hear?", "options": [{"label": "4 loud beeps", "score": 25}, {"label": "Single chirp", "score": 2}, {"label": "3 warning beeps", "score": 5}, {"label": "Silent", "score": 1}, {"label": "Not sure", "score": 6}]},
+        {"variable": "xsgeneric_now", "question": "What best describes it now?", "options": [{"label": "Alarm sounding now", "score": 16}, {"label": "Silenced but was alarming", "score": 10}, {"label": "Just a warning chirp", "score": 3}, {"label": "Normal", "score": 1}, {"label": "Not sure", "score": 6}]},
+        {"variable": "xsgeneric_repeat", "question": "How often does it happen?", "options": [{"label": "Keeps repeating", "score": 14}, {"label": "About every minute", "score": 4}, {"label": "Normal", "score": 1}, {"label": "Not sure", "score": 6}]},
+        {"variable": "xsgeneric_issue", "question": "What does it seem like?", "options": [{"label": "Possible CO alarm", "score": 20}, {"label": "Low battery", "score": 2}, {"label": "End of life", "score": 5}, {"label": "Fault", "score": 4}, {"label": "Normal", "score": 1}, {"label": "Not sure", "score": 6}]},
+    ]
+
+    nodes = [
+        WorkflowNode(
+            id="xs_model",
+            type=WorkflowNodeType.QUESTION,
+            data={
+                "group": "X-Sense",
+                "question": "Which X-Sense model is shown?",
+                "variable": "xs_model",
+                "options": [
+                    {"label": "XC01-M", "score": 1},
+                    {"label": "XC04-WX", "score": 1},
+                    {"label": "XC01-R", "score": 1},
+                    {"label": "XC0C-SR", "score": 1},
+                    {"label": "XC0C-IR", "score": 1},
+                    {"label": "SC07-WX", "score": 1},
+                    {"label": "SC07", "score": 1},
+                    {"label": "SC07-W", "score": 1},
+                    {"label": "Not sure / another X-Sense model", "score": 1},
+                ],
+            },
+        ),
+        WorkflowNode(
+            id="xs_model_switch",
+            type=WorkflowNodeType.SWITCH,
+            data={
+                "group": "X-Sense",
+                "variable": "xs_model",
+                "label": "X-Sense model routing",
+                "cases": ["XC01-M", "XC04-WX", "XC01-R", "XC0C-SR", "XC0C-IR", "SC07-WX", "SC07", "SC07-W", "Not sure / another X-Sense model"],
+                "default": "Not sure / another X-Sense model",
+            },
+        ),
+    ]
+    edges = [
+        WorkflowEdge(source="xs_model", target="xs_model_switch"),
+        WorkflowEdge(source="xs_model_switch", target="xc01m_q1", condition="xs_model == 'XC01-M'"),
+        WorkflowEdge(source="xs_model_switch", target="xc04wx_q1", condition="xs_model == 'XC04-WX'"),
+        WorkflowEdge(source="xs_model_switch", target="xc01r_q1", condition="xs_model == 'XC01-R'"),
+        WorkflowEdge(source="xs_model_switch", target="xc0c_q1", condition="xs_model == 'XC0C-SR'"),
+        WorkflowEdge(source="xs_model_switch", target="xc0c_q1", condition="xs_model == 'XC0C-IR'"),
+        WorkflowEdge(source="xs_model_switch", target="sc07wx_q1", condition="xs_model == 'SC07-WX'"),
+        WorkflowEdge(source="xs_model_switch", target="sc07_q1", condition="xs_model == 'SC07'"),
+        WorkflowEdge(source="xs_model_switch", target="sc07w_q1", condition="xs_model == 'SC07-W'"),
+        WorkflowEdge(source="xs_model_switch", target="xsgeneric_q1", condition="xs_model == 'Not sure / another X-Sense model'"),
+    ]
+
+    branch_specs = [
+        ("xc01m", xc01m_questions, {
+            "emergency": "X-Sense XC01-M score indicates a likely live CO alarm.\n\n1. Evacuate immediately\n2. Open doors and windows\n3. Do not re-enter\n4. Call 999 if anyone feels unwell\n\nEmergency engineer dispatched.",
+            "monitor": "X-Sense XC01-M score is inconclusive.\n\nVentilate the property, avoid fuel-burning appliances, and monitor the alarm closely.",
+            "guidance": "X-Sense XC01-M score fits a maintenance or non-emergency pattern.\n\nFollow the XC01-M guidance for battery, fault, end-of-life, or test status.",
+        }, "XC01-M"),
+        ("xc04wx", xc04wx_questions, {
+            "emergency": "X-Sense XC04-WX score indicates a likely live CO alarm.\n\n1. Evacuate immediately\n2. Open doors and windows\n3. Do not re-enter\n4. Call 999 if anyone feels unwell\n\nEmergency engineer dispatched.",
+            "monitor": "X-Sense XC04-WX score is inconclusive.\n\nVentilate the property, avoid fuel-burning appliances, and monitor the alarm closely.",
+            "guidance": "X-Sense XC04-WX score fits a maintenance or non-emergency pattern.\n\nFollow the XC04-WX guidance for battery, fault, end-of-life, or test status.",
+        }, "XC04-WX"),
+        ("xc01r", xc01r_questions, {
+            "emergency": "X-Sense XC01-R score indicates a likely live CO alarm.\n\n1. Evacuate immediately\n2. Open doors and windows\n3. Do not re-enter\n4. Call 999 if anyone feels unwell\n\nEmergency engineer dispatched.",
+            "monitor": "X-Sense XC01-R score is inconclusive.\n\nVentilate the property, avoid fuel-burning appliances, and monitor the alarm closely.",
+            "guidance": "X-Sense XC01-R score fits a maintenance or non-emergency pattern.\n\nFollow the XC01-R guidance for battery, fault, end-of-life, or test status.",
+        }, "XC01-R"),
+        ("xc0c", xc0c_questions, {
+            "emergency": "X-Sense XC0C-SR / XC0C-IR score indicates a likely live CO alarm.\n\n1. Evacuate immediately\n2. Open doors and windows\n3. Do not re-enter\n4. Call 999 if anyone feels unwell\n\nEmergency engineer dispatched.",
+            "monitor": "X-Sense XC0C-SR / XC0C-IR score is inconclusive.\n\nVentilate the property, avoid fuel-burning appliances, and monitor the alarm closely.",
+            "guidance": "X-Sense XC0C-SR / XC0C-IR score fits a maintenance or non-emergency pattern.\n\nFollow the model guidance for battery, fault, end-of-life, or test status.",
+        }, "XC0C-SR / XC0C-IR"),
+        ("sc07wx", sc07wx_questions, {
+            "emergency": "X-Sense SC07-WX score indicates a likely live CO alarm.\n\n1. Evacuate immediately\n2. Open doors and windows\n3. Do not re-enter\n4. Call 999 if anyone feels unwell\n\nEmergency engineer dispatched.",
+            "monitor": "X-Sense SC07-WX score is inconclusive.\n\nVentilate the property, avoid fuel-burning appliances, and monitor the alarm closely.",
+            "guidance": "X-Sense SC07-WX score fits a maintenance or non-emergency pattern.\n\nFollow the SC07-WX guidance for battery, fault, end-of-life, or test status.",
+        }, "SC07-WX"),
+        ("sc07", sc07_questions, {
+            "emergency": "X-Sense SC07 score indicates a likely live CO alarm.\n\n1. Evacuate immediately\n2. Open doors and windows\n3. Do not re-enter\n4. Call 999 if anyone feels unwell\n\nEmergency engineer dispatched.",
+            "monitor": "X-Sense SC07 score is inconclusive.\n\nVentilate the property, avoid fuel-burning appliances, and monitor the alarm closely.",
+            "guidance": "X-Sense SC07 score fits a maintenance or non-emergency pattern.\n\nFollow the SC07 guidance for battery, fault, end-of-life, or test status.",
+        }, "SC07"),
+        ("sc07w", sc07w_questions, {
+            "emergency": "X-Sense SC07-W score indicates a likely live CO alarm.\n\n1. Evacuate immediately\n2. Open doors and windows\n3. Do not re-enter\n4. Call 999 if anyone feels unwell\n\nEmergency engineer dispatched.",
+            "monitor": "X-Sense SC07-W score is inconclusive.\n\nVentilate the property, avoid fuel-burning appliances, and monitor the alarm closely.",
+            "guidance": "X-Sense SC07-W score fits a maintenance or non-emergency pattern.\n\nFollow the SC07-W guidance for battery, fault, end-of-life, or test status.",
+        }, "SC07-W"),
+        ("xsgeneric", xsgeneric_questions, {
+            "emergency": "Generic X-Sense score indicates a likely live CO alarm.\n\n1. Evacuate immediately\n2. Open doors and windows\n3. Do not re-enter\n4. Call 999 if anyone feels unwell\n\nEmergency engineer dispatched.",
+            "monitor": "Generic X-Sense score is inconclusive.\n\nVentilate the property, avoid fuel-burning appliances, and monitor the alarm closely.",
+            "guidance": "Generic X-Sense score fits a maintenance or non-emergency pattern.\n\nFollow the alarm guidance for battery, fault, end-of-life, or test status.",
+        }, "Unknown X-Sense"),
+    ]
+
+    for prefix, questions, messages, label in branch_specs:
+        branch_nodes, branch_edges = _build_branch(prefix, questions, messages, label)
+        nodes.extend(branch_nodes)
+        edges.extend(branch_edges)
+
+    return _build_manufacturer_workflow(tenant_id, CO_ALARM_SUBFLOW_XSENSE, "xs_model", nodes, edges)
 
 
 def _create_co_alarm_honeywell_workflow(tenant_id: str) -> WorkflowDefinition:
-    return _build_manufacturer_workflow(tenant_id, CO_ALARM_SUBFLOW_HONEYWELL, "hw_model", [WorkflowNode(id="hw_model", type=WorkflowNodeType.QUESTION, data={"group": "Honeywell", "question": "Which Honeywell X-Series model do you have?", "variable": "hw_model", "options": [{"label": "XC70", "score": 0}, {"label": "XC100", "score": 0}, {"label": "XC100D / with display", "score": 0}, {"label": "Not sure", "score": 0}]}), WorkflowNode(id="hw_status", type=WorkflowNodeType.QUESTION, data={"group": "Honeywell", "question": "What is the alarm doing right now?", "variable": "hw_status", "options": [{"label": "Full alarm / loud warning", "score": 25}, {"label": "Pre-alarm / low level warning", "score": 15}, {"label": "Yellow or fault indication", "score": 0}, {"label": "Green light only / normal", "score": 0}]}), WorkflowNode(id="hw_alarm_check", type=WorkflowNodeType.CONDITION, data={"group": "Honeywell", "expression": "hw_status == 'Full alarm / loud warning'"}), WorkflowNode(id="hw_alarm_out", type=WorkflowNodeType.DECISION, data={"group": "Honeywell", "outcome": "emergency_dispatch", "message": "HONEYWELL CO ALARM ACTIVATED.\n\n1. Evacuate immediately\n2. Open doors and windows\n3. Do not re-enter\n4. Call 999 if anyone feels unwell\n\nEmergency engineer dispatched."}), WorkflowNode(id="hw_prealarm_check", type=WorkflowNodeType.CONDITION, data={"group": "Honeywell", "expression": "hw_status == 'Pre-alarm / low level warning'"}), WorkflowNode(id="hw_prealarm_out", type=WorkflowNodeType.DECISION, data={"group": "Honeywell", "outcome": "schedule_engineer", "message": "Honeywell pre-alarm or low-level monitoring alert reported.\n\nVentilate the property and avoid using gas appliances until checked.\nAn engineer will investigate."}), WorkflowNode(id="hw_fault_type", type=WorkflowNodeType.QUESTION, data={"group": "Honeywell", "question": "Is it showing a low battery / end-of-life warning or a fault warning?", "variable": "hw_fault_type", "options": [{"label": "Low battery or end of life", "score": 0}, {"label": "Fault / sensor problem", "score": 0}, {"label": "Not sure", "score": 0}]}), WorkflowNode(id="hw_battery_check", type=WorkflowNodeType.CONDITION, data={"group": "Honeywell", "expression": "hw_fault_type == 'Low battery or end of life'"}), WorkflowNode(id="hw_battery_out", type=WorkflowNodeType.DECISION, data={"group": "Honeywell", "outcome": "close_with_guidance", "message": "Honeywell X-Series battery/end-of-life warning reported.\n\nThese units are sealed maintenance-free alarms. Replace the alarm when end-of-life is indicated.\nNo engineer visit needed."}), WorkflowNode(id="hw_fault_out", type=WorkflowNodeType.DECISION, data={"group": "Honeywell", "outcome": "close_with_guidance", "message": "Honeywell X-Series fault warning reported.\n\nThis indicates a device issue rather than confirmed CO. Replace the alarm and investigate appliances if concerns remain.\nNo engineer visit needed."}), WorkflowNode(id="hw_normal_out", type=WorkflowNodeType.DECISION, data={"group": "Honeywell", "outcome": "close_with_guidance", "message": "The Honeywell alarm appears to be in normal status. Press the test button to confirm operation. If it warns again, call us back."})], [WorkflowEdge(source="hw_model", target="hw_status"), WorkflowEdge(source="hw_status", target="hw_alarm_check"), WorkflowEdge(source="hw_alarm_check", target="hw_alarm_out", condition="True"), WorkflowEdge(source="hw_alarm_check", target="hw_prealarm_check", condition="False"), WorkflowEdge(source="hw_prealarm_check", target="hw_prealarm_out", condition="True"), WorkflowEdge(source="hw_prealarm_check", target="hw_fault_type", condition="False"), WorkflowEdge(source="hw_fault_type", target="hw_battery_check"), WorkflowEdge(source="hw_battery_check", target="hw_battery_out", condition="True"), WorkflowEdge(source="hw_battery_check", target="hw_fault_out", condition="False"), WorkflowEdge(source="hw_status", target="hw_normal_out", condition="hw_status == 'Green light only / normal'")])
+    def _question(node_id: str, variable: str, question: str, options: list[dict]) -> WorkflowNode:
+        return WorkflowNode(
+            id=node_id,
+            type=WorkflowNodeType.QUESTION,
+            data={"group": "Honeywell", "question": question, "variable": variable, "options": options},
+        )
+
+    def _build_branch(prefix: str, questions: list[dict], messages: dict, label: str | None = None) -> tuple[list[WorkflowNode], list[WorkflowEdge]]:
+        nodes: list[WorkflowNode] = []
+        edges: list[WorkflowEdge] = []
+
+        for index, question in enumerate(questions):
+            q_id = f"{prefix}_q{index + 1}"
+            nodes.append(_question(q_id, question["variable"], question["question"], question["options"]))
+            if index > 0:
+                edges.append(WorkflowEdge(source=f"{prefix}_q{index}", target=q_id))
+
+        calc_id = f"{prefix}_calculate_score"
+        switch_id = f"{prefix}_risk_switch"
+        score_variable = f"{prefix}_score"
+        normalized_variable = f"{prefix}_normalized_score"
+        max_score = sum(
+            max(int(option.get("score", 0)) for option in question["options"])
+            for question in questions
+        )
+        safe_score_parts = " + ".join(
+            f"int({question['variable']}_score if '{question['variable']}_score' in locals() else 0)"
+            for question in questions
+        )
+
+        nodes.append(
+            WorkflowNode(
+                id=calc_id,
+                type=WorkflowNodeType.CALCULATE,
+                data={
+                    "group": "Honeywell",
+                    "calculation": (
+                        f"{score_variable} = {safe_score_parts}\n"
+                        f"{normalized_variable} = round(({score_variable} / {max_score}), 3) if {max_score} else 0"
+                    ),
+                    "result_variable": normalized_variable,
+                },
+            )
+        )
+        nodes.append(
+            WorkflowNode(
+                id=switch_id,
+                type=WorkflowNodeType.SWITCH,
+                data={
+                    "group": "Honeywell",
+                    "variable": normalized_variable,
+                    "label": f"{label or prefix} risk routing",
+                    "cases": ["Emergency", "Monitor", "Guidance"],
+                },
+            )
+        )
+        nodes.extend(
+            [
+                WorkflowNode(id=f"{prefix}_emergency_out", type=WorkflowNodeType.DECISION, data={"group": "Honeywell", "outcome": "emergency_dispatch", "message": messages["emergency"]}),
+                WorkflowNode(id=f"{prefix}_monitor_out", type=WorkflowNodeType.DECISION, data={"group": "Honeywell", "outcome": "monitor", "message": messages["monitor"]}),
+                WorkflowNode(id=f"{prefix}_guidance_out", type=WorkflowNodeType.DECISION, data={"group": "Honeywell", "outcome": "close_with_guidance", "message": messages["guidance"]}),
+            ]
+        )
+        edges.append(WorkflowEdge(source=f"{prefix}_q{len(questions)}", target=calc_id))
+        edges.append(WorkflowEdge(source=calc_id, target=switch_id))
+        edges.extend(
+            [
+                WorkflowEdge(source=switch_id, target=f"{prefix}_emergency_out", condition=f"{normalized_variable} >= 0.7"),
+                WorkflowEdge(source=switch_id, target=f"{prefix}_monitor_out", condition=f"{normalized_variable} >= 0.35"),
+                WorkflowEdge(source=switch_id, target=f"{prefix}_guidance_out"),
+            ]
+        )
+        return nodes, edges
+
+    xc70_questions = [
+        {"variable": "hw70_sound", "question": "What is the XC70 doing?", "options": [{"label": "Full loud alarm", "score": 25}, {"label": "Pre-alarm warning", "score": 15}, {"label": "Single warning chirp", "score": 3}, {"label": "No sound", "score": 1}, {"label": "Not sure", "score": 6}]},
+        {"variable": "hw70_light", "question": "Which light do you see?", "options": [{"label": "Red alarm light", "score": 12}, {"label": "Yellow warning light", "score": 4}, {"label": "Green normal light", "score": 1}, {"label": "No light", "score": 2}, {"label": "Not sure", "score": 6}]},
+        {"variable": "hw70_now", "question": "What best describes it now?", "options": [{"label": "Alarm sounding now", "score": 16}, {"label": "Low level warning only", "score": 10}, {"label": "Just a warning chirp", "score": 3}, {"label": "Normal", "score": 1}, {"label": "Not sure", "score": 6}]},
+        {"variable": "hw70_feature", "question": "Which XC70 feature fits?", "options": [{"label": "Alarm memory", "score": 8}, {"label": "Event logger only", "score": 6}, {"label": "End-of-life warning", "score": 5}, {"label": "Fault warning", "score": 4}, {"label": "Normal", "score": 1}, {"label": "Not sure", "score": 6}]},
+        {"variable": "hw70_issue", "question": "What does it seem like?", "options": [{"label": "Possible CO alarm", "score": 20}, {"label": "Early warning", "score": 10}, {"label": "Low battery / end of life", "score": 4}, {"label": "Fault", "score": 4}, {"label": "Normal", "score": 1}, {"label": "Not sure", "score": 6}]},
+    ]
+    xc100_questions = [
+        {"variable": "hw100_sound", "question": "What is the XC100 doing?", "options": [{"label": "Full loud alarm", "score": 25}, {"label": "Pre-alarm warning", "score": 15}, {"label": "Single warning chirp", "score": 3}, {"label": "No sound", "score": 1}, {"label": "Not sure", "score": 6}]},
+        {"variable": "hw100_light", "question": "Which light do you see?", "options": [{"label": "Red alarm light", "score": 12}, {"label": "Yellow warning light", "score": 4}, {"label": "Green normal light", "score": 1}, {"label": "No light", "score": 2}, {"label": "Not sure", "score": 6}]},
+        {"variable": "hw100_now", "question": "What best describes it now?", "options": [{"label": "Alarm sounding now", "score": 16}, {"label": "Low level warning only", "score": 10}, {"label": "Just a warning chirp", "score": 3}, {"label": "Normal", "score": 1}, {"label": "Not sure", "score": 6}]},
+        {"variable": "hw100_feature", "question": "Which XC100 feature fits?", "options": [{"label": "Alarm memory", "score": 8}, {"label": "Low level monitor", "score": 10}, {"label": "End-of-life warning", "score": 5}, {"label": "Fault warning", "score": 4}, {"label": "Normal", "score": 1}, {"label": "Not sure", "score": 6}]},
+        {"variable": "hw100_issue", "question": "What does it seem like?", "options": [{"label": "Possible CO alarm", "score": 20}, {"label": "Early warning", "score": 10}, {"label": "Low battery / end of life", "score": 4}, {"label": "Fault", "score": 4}, {"label": "Normal", "score": 1}, {"label": "Not sure", "score": 6}]},
+    ]
+    xc100d_questions = [
+        {"variable": "hw100d_sound", "question": "What is the XC100D doing?", "options": [{"label": "Full loud alarm", "score": 25}, {"label": "Pre-alarm warning", "score": 15}, {"label": "Single warning chirp", "score": 3}, {"label": "No sound", "score": 1}, {"label": "Not sure", "score": 6}]},
+        {"variable": "hw100d_display", "question": "What does the display or light show?", "options": [{"label": "Red alarm warning", "score": 12}, {"label": "Yellow warning / icon", "score": 4}, {"label": "Green normal", "score": 1}, {"label": "No display / unsure", "score": 6}]},
+        {"variable": "hw100d_now", "question": "What best describes it now?", "options": [{"label": "Alarm sounding now", "score": 16}, {"label": "Low level warning only", "score": 10}, {"label": "Just a warning chirp", "score": 3}, {"label": "Normal", "score": 1}, {"label": "Not sure", "score": 6}]},
+        {"variable": "hw100d_feature", "question": "Which XC100D feature fits?", "options": [{"label": "Alarm memory", "score": 8}, {"label": "Low level monitor", "score": 10}, {"label": "End-of-life warning", "score": 5}, {"label": "Fault warning", "score": 4}, {"label": "Normal", "score": 1}, {"label": "Not sure", "score": 6}]},
+        {"variable": "hw100d_issue", "question": "What does it seem like?", "options": [{"label": "Possible CO alarm", "score": 20}, {"label": "Early warning", "score": 10}, {"label": "Low battery / end of life", "score": 4}, {"label": "Fault", "score": 4}, {"label": "Normal", "score": 1}, {"label": "Not sure", "score": 6}]},
+    ]
+    hwgeneric_questions = [
+        {"variable": "hwgeneric_sound", "question": "What is the Honeywell alarm doing?", "options": [{"label": "Full loud alarm", "score": 25}, {"label": "Pre-alarm warning", "score": 15}, {"label": "Single warning chirp", "score": 3}, {"label": "No sound", "score": 1}, {"label": "Not sure", "score": 6}]},
+        {"variable": "hwgeneric_light", "question": "Which light do you see?", "options": [{"label": "Red alarm light", "score": 12}, {"label": "Yellow warning light", "score": 4}, {"label": "Green normal light", "score": 1}, {"label": "No light", "score": 2}, {"label": "Not sure", "score": 6}]},
+        {"variable": "hwgeneric_now", "question": "What best describes it now?", "options": [{"label": "Alarm sounding now", "score": 16}, {"label": "Low level warning only", "score": 10}, {"label": "Just a warning chirp", "score": 3}, {"label": "Normal", "score": 1}, {"label": "Not sure", "score": 6}]},
+        {"variable": "hwgeneric_feature", "question": "Which feature fits best?", "options": [{"label": "Alarm memory", "score": 8}, {"label": "Low level warning", "score": 10}, {"label": "End-of-life warning", "score": 5}, {"label": "Fault warning", "score": 4}, {"label": "Normal", "score": 1}, {"label": "Not sure", "score": 6}]},
+        {"variable": "hwgeneric_issue", "question": "What does it seem like?", "options": [{"label": "Possible CO alarm", "score": 20}, {"label": "Early warning", "score": 10}, {"label": "Low battery / end of life", "score": 4}, {"label": "Fault", "score": 4}, {"label": "Normal", "score": 1}, {"label": "Not sure", "score": 6}]},
+    ]
+
+    nodes = [
+        WorkflowNode(
+            id="hw_model",
+            type=WorkflowNodeType.QUESTION,
+            data={
+                "group": "Honeywell",
+                "question": "Which Honeywell model is shown?",
+                "variable": "hw_model",
+                "options": [
+                    {"label": "XC70", "score": 1},
+                    {"label": "XC100", "score": 1},
+                    {"label": "XC100D", "score": 1},
+                    {"label": "Not sure / another Honeywell model", "score": 1},
+                ],
+            },
+        ),
+        WorkflowNode(
+            id="hw_model_switch",
+            type=WorkflowNodeType.SWITCH,
+            data={
+                "group": "Honeywell",
+                "variable": "hw_model",
+                "label": "Honeywell model routing",
+                "cases": ["XC70", "XC100", "XC100D", "Not sure / another Honeywell model"],
+                "default": "Not sure / another Honeywell model",
+            },
+        ),
+    ]
+    edges = [
+        WorkflowEdge(source="hw_model", target="hw_model_switch"),
+        WorkflowEdge(source="hw_model_switch", target="hw70_q1", condition="hw_model == 'XC70'"),
+        WorkflowEdge(source="hw_model_switch", target="hw100_q1", condition="hw_model == 'XC100'"),
+        WorkflowEdge(source="hw_model_switch", target="hw100d_q1", condition="hw_model == 'XC100D'"),
+        WorkflowEdge(source="hw_model_switch", target="hwgeneric_q1", condition="hw_model == 'Not sure / another Honeywell model'"),
+    ]
+
+    branch_specs = [
+        ("hw70", xc70_questions, {
+            "emergency": "Honeywell XC70 score indicates a likely live CO alarm.\n\n1. Evacuate immediately\n2. Open doors and windows\n3. Do not re-enter\n4. Call 999 if anyone feels unwell\n\nEmergency engineer dispatched.",
+            "monitor": "Honeywell XC70 score is inconclusive.\n\nVentilate the property and avoid using fuel-burning appliances while monitoring the alarm.",
+            "guidance": "Honeywell XC70 score fits a maintenance or non-emergency pattern.\n\nFollow the XC70 guidance for battery, fault, end-of-life, or test status.",
+        }, "XC70"),
+        ("hw100", xc100_questions, {
+            "emergency": "Honeywell XC100 score indicates a likely live CO alarm.\n\n1. Evacuate immediately\n2. Open doors and windows\n3. Do not re-enter\n4. Call 999 if anyone feels unwell\n\nEmergency engineer dispatched.",
+            "monitor": "Honeywell XC100 score is inconclusive.\n\nVentilate the property and avoid using fuel-burning appliances while monitoring the alarm.",
+            "guidance": "Honeywell XC100 score fits a maintenance or non-emergency pattern.\n\nFollow the XC100 guidance for battery, fault, end-of-life, or test status.",
+        }, "XC100"),
+        ("hw100d", xc100d_questions, {
+            "emergency": "Honeywell XC100D score indicates a likely live CO alarm.\n\n1. Evacuate immediately\n2. Open doors and windows\n3. Do not re-enter\n4. Call 999 if anyone feels unwell\n\nEmergency engineer dispatched.",
+            "monitor": "Honeywell XC100D score is inconclusive.\n\nVentilate the property and avoid using fuel-burning appliances while monitoring the alarm.",
+            "guidance": "Honeywell XC100D score fits a maintenance or non-emergency pattern.\n\nFollow the XC100D guidance for battery, fault, end-of-life, or test status.",
+        }, "XC100D"),
+        ("hwgeneric", hwgeneric_questions, {
+            "emergency": "Generic Honeywell score indicates a likely live CO alarm.\n\n1. Evacuate immediately\n2. Open doors and windows\n3. Do not re-enter\n4. Call 999 if anyone feels unwell\n\nEmergency engineer dispatched.",
+            "monitor": "Generic Honeywell score is inconclusive.\n\nVentilate the property and avoid using fuel-burning appliances while monitoring the alarm.",
+            "guidance": "Generic Honeywell score fits a maintenance or non-emergency pattern.\n\nFollow the alarm guidance for battery, fault, end-of-life, or test status.",
+        }, "Unknown Honeywell"),
+    ]
+
+    for prefix, questions, messages, label in branch_specs:
+        branch_nodes, branch_edges = _build_branch(prefix, questions, messages, label)
+        nodes.extend(branch_nodes)
+        edges.extend(branch_edges)
+
+    return _build_manufacturer_workflow(tenant_id, CO_ALARM_SUBFLOW_HONEYWELL, "hw_model", nodes, edges)
 
 
 def _create_co_alarm_google_nest_workflow(tenant_id: str) -> WorkflowDefinition:
-    return _build_manufacturer_workflow(tenant_id, CO_ALARM_SUBFLOW_GOOGLE_NEST, "nest_alert_type", [WorkflowNode(id="nest_alert_type", type=WorkflowNodeType.QUESTION, data={"group": "Google Nest", "question": "What is your Nest Protect doing?", "variable": "nest_alert_type", "options": [{"label": "Red emergency CO alarm", "score": 25}, {"label": "Yellow Heads-Up warning", "score": 15}, {"label": "Yellow issue / maintenance warning", "score": 0}, {"label": "Only chirping / no alarm", "score": 0}]}), WorkflowNode(id="nest_red_check", type=WorkflowNodeType.CONDITION, data={"group": "Google Nest", "expression": "nest_alert_type == 'Red emergency CO alarm'"}), WorkflowNode(id="nest_red_out", type=WorkflowNodeType.DECISION, data={"group": "Google Nest", "outcome": "emergency_dispatch", "message": "NEST PROTECT RED CO EMERGENCY ALARM.\n\n1. Evacuate immediately\n2. Open doors and windows\n3. Do not re-enter\n4. Call 999 if anyone is unwell\n\nEmergency engineer dispatched."}), WorkflowNode(id="nest_heads_up_check", type=WorkflowNodeType.CONDITION, data={"group": "Google Nest", "expression": "nest_alert_type == 'Yellow Heads-Up warning'"}), WorkflowNode(id="nest_heads_up_out", type=WorkflowNodeType.DECISION, data={"group": "Google Nest", "outcome": "schedule_engineer", "message": "Nest Protect Heads-Up CO warning reported.\n\nThis is an early warning that may indicate rising CO levels. Ventilate the property and avoid using gas appliances until checked.\nAn engineer will investigate."}), WorkflowNode(id="nest_issue_type", type=WorkflowNodeType.QUESTION, data={"group": "Google Nest", "question": "Is Nest reporting a device issue such as sensors, battery, or expiry?", "variable": "nest_issue_type", "options": [{"label": "Battery / power issue", "score": 0}, {"label": "Sensor / expired / maintenance issue", "score": 0}, {"label": "Not sure", "score": 0}]}), WorkflowNode(id="nest_battery_check", type=WorkflowNodeType.CONDITION, data={"group": "Google Nest", "expression": "nest_issue_type == 'Battery / power issue'"}), WorkflowNode(id="nest_battery_out", type=WorkflowNodeType.DECISION, data={"group": "Google Nest", "outcome": "close_with_guidance", "message": "Nest Protect battery/power warning reported.\n\nReplace the batteries on the battery model or service the unit if applicable. This is not a confirmed CO event.\nNo engineer visit needed."}), WorkflowNode(id="nest_issue_out", type=WorkflowNodeType.DECISION, data={"group": "Google Nest", "outcome": "close_with_guidance", "message": "Nest Protect maintenance or sensor issue reported.\n\nThis indicates a device issue rather than confirmed CO. Test the unit and replace if expired or faulty.\nNo engineer visit needed."}), WorkflowNode(id="nest_chirp_out", type=WorkflowNodeType.DECISION, data={"group": "Google Nest", "outcome": "close_with_guidance", "message": "Nest Protect chirping without a CO alarm usually indicates a battery or maintenance issue.\nTest the unit and address the warning in the app/device guidance.\nNo engineer visit needed."})], [WorkflowEdge(source="nest_alert_type", target="nest_red_check"), WorkflowEdge(source="nest_red_check", target="nest_red_out", condition="True"), WorkflowEdge(source="nest_red_check", target="nest_heads_up_check", condition="False"), WorkflowEdge(source="nest_heads_up_check", target="nest_heads_up_out", condition="True"), WorkflowEdge(source="nest_heads_up_check", target="nest_issue_type", condition="False"), WorkflowEdge(source="nest_issue_type", target="nest_battery_check"), WorkflowEdge(source="nest_battery_check", target="nest_battery_out", condition="True"), WorkflowEdge(source="nest_battery_check", target="nest_issue_out", condition="False"), WorkflowEdge(source="nest_alert_type", target="nest_chirp_out", condition="nest_alert_type == 'Only chirping / no alarm'")])
+    def _question(node_id: str, variable: str, question: str, options: list[dict]) -> WorkflowNode:
+        return WorkflowNode(
+            id=node_id,
+            type=WorkflowNodeType.QUESTION,
+            data={"group": "Google Nest", "question": question, "variable": variable, "options": options},
+        )
+
+    def _build_branch(prefix: str, questions: list[dict], messages: dict, label: str | None = None) -> tuple[list[WorkflowNode], list[WorkflowEdge]]:
+        nodes: list[WorkflowNode] = []
+        edges: list[WorkflowEdge] = []
+
+        for index, question in enumerate(questions):
+            q_id = f"{prefix}_q{index + 1}"
+            nodes.append(_question(q_id, question["variable"], question["question"], question["options"]))
+            if index > 0:
+                edges.append(WorkflowEdge(source=f"{prefix}_q{index}", target=q_id))
+
+        calc_id = f"{prefix}_calculate_score"
+        switch_id = f"{prefix}_risk_switch"
+        score_variable = f"{prefix}_score"
+        normalized_variable = f"{prefix}_normalized_score"
+        max_score = sum(
+            max(int(option.get("score", 0)) for option in question["options"])
+            for question in questions
+        )
+        safe_score_parts = " + ".join(
+            f"int({question['variable']}_score if '{question['variable']}_score' in locals() else 0)"
+            for question in questions
+        )
+
+        nodes.append(
+            WorkflowNode(
+                id=calc_id,
+                type=WorkflowNodeType.CALCULATE,
+                data={
+                    "group": "Google Nest",
+                    "calculation": (
+                        f"{score_variable} = {safe_score_parts}\n"
+                        f"{normalized_variable} = round(({score_variable} / {max_score}), 3) if {max_score} else 0"
+                    ),
+                    "result_variable": normalized_variable,
+                },
+            )
+        )
+        nodes.append(
+            WorkflowNode(
+                id=switch_id,
+                type=WorkflowNodeType.SWITCH,
+                data={
+                    "group": "Google Nest",
+                    "variable": normalized_variable,
+                    "label": f"{label or prefix} risk routing",
+                    "cases": ["Emergency", "Monitor", "Guidance"],
+                },
+            )
+        )
+        nodes.extend(
+            [
+                WorkflowNode(id=f"{prefix}_emergency_out", type=WorkflowNodeType.DECISION, data={"group": "Google Nest", "outcome": "emergency_dispatch", "message": messages["emergency"]}),
+                WorkflowNode(id=f"{prefix}_monitor_out", type=WorkflowNodeType.DECISION, data={"group": "Google Nest", "outcome": "monitor", "message": messages["monitor"]}),
+                WorkflowNode(id=f"{prefix}_guidance_out", type=WorkflowNodeType.DECISION, data={"group": "Google Nest", "outcome": "close_with_guidance", "message": messages["guidance"]}),
+            ]
+        )
+        edges.append(WorkflowEdge(source=f"{prefix}_q{len(questions)}", target=calc_id))
+        edges.append(WorkflowEdge(source=calc_id, target=switch_id))
+        edges.extend(
+            [
+                WorkflowEdge(source=switch_id, target=f"{prefix}_emergency_out", condition=f"{normalized_variable} >= 0.7"),
+                WorkflowEdge(source=switch_id, target=f"{prefix}_monitor_out", condition=f"{normalized_variable} >= 0.35"),
+                WorkflowEdge(source=switch_id, target=f"{prefix}_guidance_out"),
+            ]
+        )
+        return nodes, edges
+
+    nest_questions = [
+        {"variable": "nest_alert", "question": "What is the Nest Protect doing?", "options": [{"label": "Red emergency alarm", "score": 25}, {"label": "Yellow Heads-Up warning", "score": 15}, {"label": "Yellow issue warning", "score": 4}, {"label": "Only chirping", "score": 2}, {"label": "Not sure", "score": 6}]},
+        {"variable": "nest_voice", "question": "What voice or message fits?", "options": [{"label": "CO emergency message", "score": 20}, {"label": "Heads-Up message", "score": 10}, {"label": "Battery / sensor issue", "score": 4}, {"label": "No spoken message", "score": 2}, {"label": "Not sure", "score": 6}]},
+        {"variable": "nest_now", "question": "What best describes it now?", "options": [{"label": "Alarm sounding now", "score": 16}, {"label": "Warning only", "score": 10}, {"label": "Just chirping", "score": 3}, {"label": "Normal", "score": 1}, {"label": "Not sure", "score": 6}]},
+        {"variable": "nest_app", "question": "What does the app or light suggest?", "options": [{"label": "Danger / evacuate", "score": 16}, {"label": "Heads-Up / early warning", "score": 10}, {"label": "Battery / maintenance issue", "score": 4}, {"label": "Normal", "score": 1}, {"label": "Not sure", "score": 6}]},
+        {"variable": "nest_issue", "question": "What does it seem like?", "options": [{"label": "Possible CO alarm", "score": 20}, {"label": "Early warning", "score": 10}, {"label": "Maintenance issue", "score": 4}, {"label": "Normal", "score": 1}, {"label": "Not sure", "score": 6}]},
+    ]
+    nestgeneric_questions = [
+        {"variable": "nestgeneric_alert", "question": "What is the Nest alarm doing?", "options": [{"label": "Red emergency alarm", "score": 25}, {"label": "Yellow warning", "score": 15}, {"label": "Issue warning", "score": 4}, {"label": "Only chirping", "score": 2}, {"label": "Not sure", "score": 6}]},
+        {"variable": "nestgeneric_voice", "question": "What voice or message fits?", "options": [{"label": "CO emergency message", "score": 20}, {"label": "Heads-Up message", "score": 10}, {"label": "Battery / sensor issue", "score": 4}, {"label": "No spoken message", "score": 2}, {"label": "Not sure", "score": 6}]},
+        {"variable": "nestgeneric_now", "question": "What best describes it now?", "options": [{"label": "Alarm sounding now", "score": 16}, {"label": "Warning only", "score": 10}, {"label": "Just chirping", "score": 3}, {"label": "Normal", "score": 1}, {"label": "Not sure", "score": 6}]},
+        {"variable": "nestgeneric_hint", "question": "What does the app or light suggest?", "options": [{"label": "Danger / evacuate", "score": 16}, {"label": "Heads-Up / early warning", "score": 10}, {"label": "Battery / maintenance issue", "score": 4}, {"label": "Normal", "score": 1}, {"label": "Not sure", "score": 6}]},
+        {"variable": "nestgeneric_issue", "question": "What does it seem like?", "options": [{"label": "Possible CO alarm", "score": 20}, {"label": "Early warning", "score": 10}, {"label": "Maintenance issue", "score": 4}, {"label": "Normal", "score": 1}, {"label": "Not sure", "score": 6}]},
+    ]
+
+    nodes = [
+        WorkflowNode(
+            id="nest_model",
+            type=WorkflowNodeType.QUESTION,
+            data={
+                "group": "Google Nest",
+                "question": "Which Google Nest alarm is it?",
+                "variable": "nest_model",
+                "options": [
+                    {"label": "Nest Protect", "score": 1},
+                    {"label": "Not sure / another Nest alarm", "score": 1},
+                ],
+            },
+        ),
+        WorkflowNode(
+            id="nest_model_switch",
+            type=WorkflowNodeType.SWITCH,
+            data={
+                "group": "Google Nest",
+                "variable": "nest_model",
+                "label": "Google Nest model routing",
+                "cases": ["Nest Protect", "Not sure / another Nest alarm"],
+                "default": "Not sure / another Nest alarm",
+            },
+        ),
+    ]
+    edges = [
+        WorkflowEdge(source="nest_model", target="nest_model_switch"),
+        WorkflowEdge(source="nest_model_switch", target="nest_q1", condition="nest_model == 'Nest Protect'"),
+        WorkflowEdge(source="nest_model_switch", target="nestgeneric_q1", condition="nest_model == 'Not sure / another Nest alarm'"),
+    ]
+
+    branch_specs = [
+        ("nest", nest_questions, {
+            "emergency": "Nest Protect score indicates a likely live CO alarm.\n\n1. Evacuate immediately\n2. Open doors and windows\n3. Do not re-enter\n4. Call 999 if anyone is unwell\n\nEmergency engineer dispatched.",
+            "monitor": "Nest Protect score is inconclusive.\n\nThis may be an early warning or a real event. Ventilate the property and avoid using gas appliances while monitoring closely.",
+            "guidance": "Nest Protect score fits a maintenance or non-emergency pattern.\n\nFollow the Nest guidance for battery, maintenance, sensor issue, or test status.",
+        }, "Nest Protect"),
+        ("nestgeneric", nestgeneric_questions, {
+            "emergency": "Google Nest score indicates a likely live CO alarm.\n\n1. Evacuate immediately\n2. Open doors and windows\n3. Do not re-enter\n4. Call 999 if anyone is unwell\n\nEmergency engineer dispatched.",
+            "monitor": "Google Nest score is inconclusive.\n\nThis may be an early warning or a real event. Ventilate the property and avoid using gas appliances while monitoring closely.",
+            "guidance": "Google Nest score fits a maintenance or non-emergency pattern.\n\nFollow the alarm guidance for battery, maintenance, sensor issue, or test status.",
+        }, "Unknown Nest"),
+    ]
+
+    for prefix, questions, messages, label in branch_specs:
+        branch_nodes, branch_edges = _build_branch(prefix, questions, messages, label)
+        nodes.extend(branch_nodes)
+        edges.extend(branch_edges)
+
+    return _build_manufacturer_workflow(tenant_id, CO_ALARM_SUBFLOW_GOOGLE_NEST, "nest_model", nodes, edges)
 
 
 def _create_co_alarm_netatmo_workflow(tenant_id: str) -> WorkflowDefinition:
-    return _build_manufacturer_workflow(tenant_id, CO_ALARM_SUBFLOW_NETATMO, "netatmo_status", [WorkflowNode(id="netatmo_status", type=WorkflowNodeType.QUESTION, data={"group": "Netatmo", "question": "What is the Netatmo Smart CO Alarm indicating?", "variable": "netatmo_status", "options": [{"label": "Alarm sounding / dangerous CO detected", "score": 25}, {"label": "Fault indicator / product issue", "score": 0}, {"label": "Test or maintenance alert only", "score": 0}, {"label": "Not sure", "score": 10}]}), WorkflowNode(id="netatmo_alarm_check", type=WorkflowNodeType.CONDITION, data={"group": "Netatmo", "expression": "netatmo_status == 'Alarm sounding / dangerous CO detected'"}), WorkflowNode(id="netatmo_alarm_out", type=WorkflowNodeType.DECISION, data={"group": "Netatmo", "outcome": "emergency_dispatch", "message": "NETATMO CO ALARM ACTIVATED.\n\n1. Evacuate immediately\n2. Open doors and windows\n3. Do not re-enter\n4. Call 999 if anyone is unwell\n\nEmergency engineer dispatched."}), WorkflowNode(id="netatmo_fault_check", type=WorkflowNodeType.CONDITION, data={"group": "Netatmo", "expression": "netatmo_status == 'Fault indicator / product issue'"}), WorkflowNode(id="netatmo_fault_out", type=WorkflowNodeType.DECISION, data={"group": "Netatmo", "outcome": "close_with_guidance", "message": "Netatmo fault indicator reported.\n\nThis suggests a device problem rather than confirmed CO. Test the unit, check the app/status guidance, and replace if faulty.\nNo engineer visit needed."}), WorkflowNode(id="netatmo_maint_out", type=WorkflowNodeType.DECISION, data={"group": "Netatmo", "outcome": "close_with_guidance", "message": "Netatmo maintenance/test alert reported.\n\nComplete the device test and maintenance steps. If a real alarm occurs again, call us back immediately.\nNo engineer visit needed."}), WorkflowNode(id="netatmo_unsure_out", type=WorkflowNodeType.DECISION, data={"group": "Netatmo", "outcome": "schedule_engineer", "message": "Because the Netatmo alarm status is unclear, ventilate the property and avoid using gas appliances until checked.\nAn engineer will investigate."})], [WorkflowEdge(source="netatmo_status", target="netatmo_alarm_check"), WorkflowEdge(source="netatmo_alarm_check", target="netatmo_alarm_out", condition="True"), WorkflowEdge(source="netatmo_alarm_check", target="netatmo_fault_check", condition="False"), WorkflowEdge(source="netatmo_fault_check", target="netatmo_fault_out", condition="True"), WorkflowEdge(source="netatmo_fault_check", target="netatmo_maint_out", condition="False"), WorkflowEdge(source="netatmo_status", target="netatmo_unsure_out", condition="netatmo_status == 'Not sure'")])
+    def _question(node_id: str, variable: str, question: str, options: list[dict]) -> WorkflowNode:
+        return WorkflowNode(
+            id=node_id,
+            type=WorkflowNodeType.QUESTION,
+            data={"group": "Netatmo", "question": question, "variable": variable, "options": options},
+        )
+
+    def _build_branch(prefix: str, questions: list[dict], messages: dict, label: str | None = None) -> tuple[list[WorkflowNode], list[WorkflowEdge]]:
+        nodes: list[WorkflowNode] = []
+        edges: list[WorkflowEdge] = []
+
+        for index, question in enumerate(questions):
+            q_id = f"{prefix}_q{index + 1}"
+            nodes.append(_question(q_id, question["variable"], question["question"], question["options"]))
+            if index > 0:
+                edges.append(WorkflowEdge(source=f"{prefix}_q{index}", target=q_id))
+
+        calc_id = f"{prefix}_calculate_score"
+        switch_id = f"{prefix}_risk_switch"
+        score_variable = f"{prefix}_score"
+        normalized_variable = f"{prefix}_normalized_score"
+        max_score = sum(
+            max(int(option.get("score", 0)) for option in question["options"])
+            for question in questions
+        )
+        safe_score_parts = " + ".join(
+            f"int({question['variable']}_score if '{question['variable']}_score' in locals() else 0)"
+            for question in questions
+        )
+
+        nodes.append(
+            WorkflowNode(
+                id=calc_id,
+                type=WorkflowNodeType.CALCULATE,
+                data={
+                    "group": "Netatmo",
+                    "calculation": (
+                        f"{score_variable} = {safe_score_parts}\n"
+                        f"{normalized_variable} = round(({score_variable} / {max_score}), 3) if {max_score} else 0"
+                    ),
+                    "result_variable": normalized_variable,
+                },
+            )
+        )
+        nodes.append(
+            WorkflowNode(
+                id=switch_id,
+                type=WorkflowNodeType.SWITCH,
+                data={
+                    "group": "Netatmo",
+                    "variable": normalized_variable,
+                    "label": f"{label or prefix} risk routing",
+                    "cases": ["Emergency", "Monitor", "Guidance"],
+                },
+            )
+        )
+        nodes.extend(
+            [
+                WorkflowNode(id=f"{prefix}_emergency_out", type=WorkflowNodeType.DECISION, data={"group": "Netatmo", "outcome": "emergency_dispatch", "message": messages["emergency"]}),
+                WorkflowNode(id=f"{prefix}_monitor_out", type=WorkflowNodeType.DECISION, data={"group": "Netatmo", "outcome": "monitor", "message": messages["monitor"]}),
+                WorkflowNode(id=f"{prefix}_guidance_out", type=WorkflowNodeType.DECISION, data={"group": "Netatmo", "outcome": "close_with_guidance", "message": messages["guidance"]}),
+            ]
+        )
+        edges.append(WorkflowEdge(source=f"{prefix}_q{len(questions)}", target=calc_id))
+        edges.append(WorkflowEdge(source=calc_id, target=switch_id))
+        edges.extend(
+            [
+                WorkflowEdge(source=switch_id, target=f"{prefix}_emergency_out", condition=f"{normalized_variable} >= 0.7"),
+                WorkflowEdge(source=switch_id, target=f"{prefix}_monitor_out", condition=f"{normalized_variable} >= 0.35"),
+                WorkflowEdge(source=switch_id, target=f"{prefix}_guidance_out"),
+            ]
+        )
+        return nodes, edges
+
+    netatmo_questions = [
+        {"variable": "net_alert", "question": "What is the Netatmo alarm doing?", "options": [{"label": "Danger alarm sounding", "score": 25}, {"label": "Warning or alert", "score": 10}, {"label": "Fault warning", "score": 4}, {"label": "Just test or maintenance", "score": 2}, {"label": "Not sure", "score": 6}]},
+        {"variable": "net_light", "question": "Which light or status fits?", "options": [{"label": "Red danger warning", "score": 12}, {"label": "Amber / warning", "score": 4}, {"label": "Normal / ready", "score": 1}, {"label": "No clear light", "score": 2}, {"label": "Not sure", "score": 6}]},
+        {"variable": "net_now", "question": "What best describes it now?", "options": [{"label": "Alarm sounding now", "score": 16}, {"label": "Warning only", "score": 10}, {"label": "Just a maintenance alert", "score": 3}, {"label": "Normal", "score": 1}, {"label": "Not sure", "score": 6}]},
+        {"variable": "net_app", "question": "What does the app or status suggest?", "options": [{"label": "Danger / evacuate", "score": 16}, {"label": "CO warning", "score": 10}, {"label": "Device fault", "score": 4}, {"label": "Maintenance / test only", "score": 2}, {"label": "Not sure", "score": 6}]},
+        {"variable": "net_issue", "question": "What does it seem like?", "options": [{"label": "Possible CO alarm", "score": 20}, {"label": "Early warning", "score": 10}, {"label": "Fault / maintenance", "score": 4}, {"label": "Normal", "score": 1}, {"label": "Not sure", "score": 6}]},
+    ]
+    netgeneric_questions = [
+        {"variable": "netgeneric_alert", "question": "What is the Netatmo alarm doing?", "options": [{"label": "Danger alarm sounding", "score": 25}, {"label": "Warning or alert", "score": 10}, {"label": "Fault warning", "score": 4}, {"label": "Just test or maintenance", "score": 2}, {"label": "Not sure", "score": 6}]},
+        {"variable": "netgeneric_light", "question": "Which light or status fits?", "options": [{"label": "Red danger warning", "score": 12}, {"label": "Amber / warning", "score": 4}, {"label": "Normal / ready", "score": 1}, {"label": "No clear light", "score": 2}, {"label": "Not sure", "score": 6}]},
+        {"variable": "netgeneric_now", "question": "What best describes it now?", "options": [{"label": "Alarm sounding now", "score": 16}, {"label": "Warning only", "score": 10}, {"label": "Just a maintenance alert", "score": 3}, {"label": "Normal", "score": 1}, {"label": "Not sure", "score": 6}]},
+        {"variable": "netgeneric_hint", "question": "What does the app or status suggest?", "options": [{"label": "Danger / evacuate", "score": 16}, {"label": "CO warning", "score": 10}, {"label": "Device fault", "score": 4}, {"label": "Maintenance / test only", "score": 2}, {"label": "Not sure", "score": 6}]},
+        {"variable": "netgeneric_issue", "question": "What does it seem like?", "options": [{"label": "Possible CO alarm", "score": 20}, {"label": "Early warning", "score": 10}, {"label": "Fault / maintenance", "score": 4}, {"label": "Normal", "score": 1}, {"label": "Not sure", "score": 6}]},
+    ]
+
+    nodes = [
+        WorkflowNode(
+            id="net_model",
+            type=WorkflowNodeType.QUESTION,
+            data={
+                "group": "Netatmo",
+                "question": "Which Netatmo alarm is it?",
+                "variable": "net_model",
+                "options": [
+                    {"label": "Netatmo Smart CO Alarm", "score": 1},
+                    {"label": "Not sure / another Netatmo alarm", "score": 1},
+                ],
+            },
+        ),
+        WorkflowNode(
+            id="net_model_switch",
+            type=WorkflowNodeType.SWITCH,
+            data={
+                "group": "Netatmo",
+                "variable": "net_model",
+                "label": "Netatmo model routing",
+                "cases": ["Netatmo Smart CO Alarm", "Not sure / another Netatmo alarm"],
+                "default": "Not sure / another Netatmo alarm",
+            },
+        ),
+    ]
+    edges = [
+        WorkflowEdge(source="net_model", target="net_model_switch"),
+        WorkflowEdge(source="net_model_switch", target="net_q1", condition="net_model == 'Netatmo Smart CO Alarm'"),
+        WorkflowEdge(source="net_model_switch", target="netgeneric_q1", condition="net_model == 'Not sure / another Netatmo alarm'"),
+    ]
+
+    branch_specs = [
+        ("net", netatmo_questions, {
+            "emergency": "Netatmo Smart CO Alarm score indicates a likely live CO alarm.\n\n1. Evacuate immediately\n2. Open doors and windows\n3. Do not re-enter\n4. Call 999 if anyone is unwell\n\nEmergency engineer dispatched.",
+            "monitor": "Netatmo Smart CO Alarm score is inconclusive.\n\nThis may be an early warning or a real event. Ventilate the property and avoid using gas appliances while monitoring closely.",
+            "guidance": "Netatmo Smart CO Alarm score fits a maintenance or non-emergency pattern.\n\nFollow the Netatmo guidance for fault, maintenance, or test status.",
+        }, "Netatmo Smart CO Alarm"),
+        ("netgeneric", netgeneric_questions, {
+            "emergency": "Netatmo score indicates a likely live CO alarm.\n\n1. Evacuate immediately\n2. Open doors and windows\n3. Do not re-enter\n4. Call 999 if anyone is unwell\n\nEmergency engineer dispatched.",
+            "monitor": "Netatmo score is inconclusive.\n\nThis may be an early warning or a real event. Ventilate the property and avoid using gas appliances while monitoring closely.",
+            "guidance": "Netatmo score fits a maintenance or non-emergency pattern.\n\nFollow the alarm guidance for fault, maintenance, or test status.",
+        }, "Unknown Netatmo"),
+    ]
+
+    for prefix, questions, messages, label in branch_specs:
+        branch_nodes, branch_edges = _build_branch(prefix, questions, messages, label)
+        nodes.extend(branch_nodes)
+        edges.extend(branch_edges)
+
+    return _build_manufacturer_workflow(tenant_id, CO_ALARM_SUBFLOW_NETATMO, "net_model", nodes, edges)
 
 
 def _create_co_alarm_cavius_workflow(tenant_id: str) -> WorkflowDefinition:
-    return _build_manufacturer_workflow(tenant_id, CO_ALARM_SUBFLOW_CAVIUS, "cav_status", [WorkflowNode(id="cav_status", type=WorkflowNodeType.QUESTION, data={"group": "Cavius", "question": "What is the Cavius alarm doing?", "variable": "cav_status", "options": [{"label": "Repeated alarm tones with red LED flashing every 0.5 second", "score": 25}, {"label": "Single beep every 60 seconds with yellow LED", "score": 0}, {"label": "Two beeps every 60 seconds with yellow LED", "score": 0}, {"label": "Three beeps every 60 seconds with yellow LED", "score": 0}, {"label": "Green LED flash every 60 seconds only", "score": 0}]}), WorkflowNode(id="cav_alarm_check", type=WorkflowNodeType.CONDITION, data={"group": "Cavius", "expression": "cav_status == 'Repeated alarm tones with red LED flashing every 0.5 second'"}), WorkflowNode(id="cav_alarm_out", type=WorkflowNodeType.DECISION, data={"group": "Cavius", "outcome": "emergency_dispatch", "message": "CAVIUS CO ALARM ACTIVATED.\n\n1. Evacuate immediately\n2. Open doors and windows\n3. Do not re-enter\n4. Call 999 if anyone is unwell\n\nEmergency engineer dispatched."}), WorkflowNode(id="cav_battery_check", type=WorkflowNodeType.CONDITION, data={"group": "Cavius", "expression": "cav_status == 'Single beep every 60 seconds with yellow LED'"}), WorkflowNode(id="cav_battery_out", type=WorkflowNodeType.DECISION, data={"group": "Cavius", "outcome": "close_with_guidance", "message": "Cavius low battery warning reported.\n\nReplace the 3V lithium battery. This is not a confirmed CO event.\nNo engineer visit needed."}), WorkflowNode(id="cav_sensor_check", type=WorkflowNodeType.CONDITION, data={"group": "Cavius", "expression": "cav_status == 'Two beeps every 60 seconds with yellow LED'"}), WorkflowNode(id="cav_sensor_out", type=WorkflowNodeType.DECISION, data={"group": "Cavius", "outcome": "close_with_guidance", "message": "Cavius sensor fault warning reported.\n\nThe alarm will not respond correctly to CO. Replace the unit.\nNo engineer visit needed."}), WorkflowNode(id="cav_eol_check", type=WorkflowNodeType.CONDITION, data={"group": "Cavius", "expression": "cav_status == 'Three beeps every 60 seconds with yellow LED'"}), WorkflowNode(id="cav_eol_out", type=WorkflowNodeType.DECISION, data={"group": "Cavius", "outcome": "close_with_guidance", "message": "Cavius end-of-life warning reported.\n\nReplace the alarm unit.\nNo engineer visit needed."}), WorkflowNode(id="cav_normal_out", type=WorkflowNodeType.DECISION, data={"group": "Cavius", "outcome": "close_with_guidance", "message": "Green LED flashing every 60 seconds indicates normal mode on the Cavius unit. Test the alarm if needed and call back if it alarms again."})], [WorkflowEdge(source="cav_status", target="cav_alarm_check"), WorkflowEdge(source="cav_alarm_check", target="cav_alarm_out", condition="True"), WorkflowEdge(source="cav_alarm_check", target="cav_battery_check", condition="False"), WorkflowEdge(source="cav_battery_check", target="cav_battery_out", condition="True"), WorkflowEdge(source="cav_battery_check", target="cav_sensor_check", condition="False"), WorkflowEdge(source="cav_sensor_check", target="cav_sensor_out", condition="True"), WorkflowEdge(source="cav_sensor_check", target="cav_eol_check", condition="False"), WorkflowEdge(source="cav_eol_check", target="cav_eol_out", condition="True"), WorkflowEdge(source="cav_eol_check", target="cav_normal_out", condition="False")])
+    def _question(node_id: str, variable: str, question: str, options: list[dict]) -> WorkflowNode:
+        return WorkflowNode(
+            id=node_id,
+            type=WorkflowNodeType.QUESTION,
+            data={"group": "Cavius", "question": question, "variable": variable, "options": options},
+        )
+
+    def _build_branch(
+        prefix: str,
+        questions: list[dict],
+        score_variable: str,
+        outcomes: dict,
+    ) -> tuple[list[WorkflowNode], list[WorkflowEdge]]:
+        nodes: list[WorkflowNode] = []
+        edges: list[WorkflowEdge] = []
+
+        for index, question in enumerate(questions):
+            q_id = f"{prefix}_q{index + 1}"
+            nodes.append(_question(q_id, question["variable"], question["question"], question["options"]))
+            if index > 0:
+                edges.append(WorkflowEdge(source=f"{prefix}_q{index}", target=q_id))
+
+        calc_id = f"{prefix}_calculate_score"
+        switch_id = f"{prefix}_risk_switch"
+        normalized_variable = f"{prefix}_normalized_score"
+        max_score = sum(
+            max(int(option.get("score", 0)) for option in question["options"])
+            for question in questions
+        )
+        safe_score_parts = " + ".join(f"int({question['variable']}_score if '{question['variable']}_score' in locals() else 0)" for question in questions)
+        nodes.append(
+            WorkflowNode(
+                id=calc_id,
+                type=WorkflowNodeType.CALCULATE,
+                data={
+                    "group": "Cavius",
+                    "calculation": (
+                        f"{score_variable} = {safe_score_parts}\n"
+                        f"{normalized_variable} = round(({score_variable} / {max_score}), 3) if {max_score} else 0"
+                    ),
+                    "result_variable": normalized_variable,
+                },
+            )
+        )
+        nodes.append(
+            WorkflowNode(
+                id=switch_id,
+                type=WorkflowNodeType.SWITCH,
+                data={
+                    "group": "Cavius",
+                    "variable": normalized_variable,
+                    "label": f"{prefix} risk routing",
+                    "cases": ["Emergency", "Monitor", "Guidance"],
+                },
+            )
+        )
+        edges.append(WorkflowEdge(source=f"{prefix}_q{len(questions)}", target=calc_id))
+        edges.append(WorkflowEdge(source=calc_id, target=switch_id))
+
+        for route_name, route in outcomes.items():
+            decision_id = f"{prefix}_{route_name}_out"
+            nodes.append(
+                WorkflowNode(
+                    id=decision_id,
+                    type=WorkflowNodeType.DECISION,
+                    data={"group": "Cavius", "outcome": route["outcome"], "message": route["message"]},
+                )
+            )
+        edges.extend(
+            [
+                WorkflowEdge(source=switch_id, target=f"{prefix}_emergency_out", condition=f"{normalized_variable} >= 0.7"),
+                WorkflowEdge(source=switch_id, target=f"{prefix}_monitor_out", condition=f"{normalized_variable} >= 0.35"),
+                WorkflowEdge(source=switch_id, target=f"{prefix}_guidance_out"),
+            ]
+        )
+
+        return nodes, edges
+
+    nodes = [
+        WorkflowNode(
+            id="cav_model",
+            type=WorkflowNodeType.QUESTION,
+            data={
+                "group": "Cavius",
+                "question": "Which Cavius model is shown?",
+                "variable": "cav_model",
+                "options": [
+                    {"label": "CV4002", "score": 1},
+                    {"label": "Not sure / another Cavius model", "score": 1},
+                ],
+            },
+        ),
+        WorkflowNode(
+            id="cav_model_switch",
+            type=WorkflowNodeType.SWITCH,
+            data={
+                "group": "Cavius",
+                "variable": "cav_model",
+                "label": "Cavius model routing",
+                "cases": ["CV4002", "Not sure / another Cavius model"],
+                "default": "Not sure / another Cavius model",
+            },
+        ),
+    ]
+    edges = [
+        WorkflowEdge(source="cav_model", target="cav_model_switch"),
+        WorkflowEdge(source="cav_model_switch", target="cav4002_q1", condition="cav_model == 'CV4002'"),
+        WorkflowEdge(source="cav_model_switch", target="cavgeneric_q1", condition="cav_model == 'Not sure / another Cavius model'"),
+    ]
+
+    cav4002_nodes, cav4002_edges = _build_branch(
+        "cav4002",
+        [
+            {"variable": "cav4002_light", "question": "Which LED is showing?", "options": [{"label": "Red LED", "score": 10}, {"label": "Yellow LED", "score": 2}, {"label": "Green LED", "score": 1}, {"label": "Not sure", "score": 3}]},
+            {"variable": "cav4002_sound", "question": "Which sound fits best?", "options": [{"label": "Repeated alarm tones", "score": 25}, {"label": "1 short beep", "score": 2}, {"label": "2 short beeps", "score": 2}, {"label": "3 short beeps", "score": 2}, {"label": "No sound", "score": 1}, {"label": "Not sure", "score": 3}]},
+            {"variable": "cav4002_timing", "question": "How often does it happen?", "options": [{"label": "About every 0.5 sec", "score": 15}, {"label": "About every 60 sec", "score": 2}, {"label": "Normal", "score": 1}, {"label": "Not sure", "score": 3}]},
+            {"variable": "cav4002_led_timing", "question": "Which LED pattern fits?", "options": [{"label": "Red LED with alarm", "score": 10}, {"label": "Yellow LED with beeps", "score": 2}, {"label": "Green flash every 60 sec", "score": 1}, {"label": "Green for 3 sec after test", "score": 1}, {"label": "Not sure", "score": 3}]},
+            {"variable": "cav4002_fit", "question": "Which manual note fits?", "options": [{"label": "Danger alarm note", "score": 15}, {"label": "Low battery note", "score": 2}, {"label": "Fault note", "score": 2}, {"label": "End-of-life note", "score": 2}, {"label": "Standby / test note", "score": 1}, {"label": "Not sure", "score": 5}]},
+        ],
+        "cav4002_score",
+        {
+            "emergency": {"outcome": "emergency_dispatch", "message": "Cavius CV4002 score indicates a likely live CO alarm.\n\n1. Evacuate immediately\n2. Open doors and windows\n3. Do not re-enter\n4. Call 999 if anyone feels unwell\n\nEmergency engineer dispatched."},
+            "monitor": {"outcome": "monitor", "message": "Cavius CV4002 score is inconclusive.\n\nThis may be a false case or a true CO event. Ventilate the property, avoid fuel-burning appliances, and monitor the situation closely."},
+            "guidance": {"outcome": "close_with_guidance", "message": "Cavius CV4002 score fits a maintenance or non-emergency pattern.\n\nFollow the alarm guidance for battery, fault, end-of-life, or test status."},
+        },
+    )
+
+    cavgeneric_nodes, cavgeneric_edges = _build_branch(
+        "cavgeneric",
+        [
+            {"variable": "cavgeneric_light", "question": "Which LED is showing?", "options": [{"label": "Red LED", "score": 10}, {"label": "Yellow LED", "score": 2}, {"label": "Green LED", "score": 1}, {"label": "Not sure", "score": 3}]},
+            {"variable": "cavgeneric_sound", "question": "Which sound fits best?", "options": [{"label": "Repeated alarm tones", "score": 25}, {"label": "1 short beep", "score": 2}, {"label": "2 short beeps", "score": 2}, {"label": "3 short beeps", "score": 2}, {"label": "No sound", "score": 1}, {"label": "Not sure", "score": 3}]},
+            {"variable": "cavgeneric_timing", "question": "How often does it happen?", "options": [{"label": "About every 0.5 sec", "score": 15}, {"label": "About every 60 sec", "score": 2}, {"label": "Normal", "score": 1}, {"label": "Not sure", "score": 3}]},
+            {"variable": "cavgeneric_led_timing", "question": "Which LED pattern fits?", "options": [{"label": "Red LED with alarm", "score": 10}, {"label": "Yellow LED with beeps", "score": 2}, {"label": "Green flash every 60 sec", "score": 1}, {"label": "Green for 3 sec after test", "score": 1}, {"label": "Not sure", "score": 3}]},
+            {"variable": "cavgeneric_fit", "question": "Which manual note fits?", "options": [{"label": "Danger alarm note", "score": 15}, {"label": "Low battery note", "score": 2}, {"label": "Fault note", "score": 2}, {"label": "End-of-life note", "score": 2}, {"label": "Standby / test note", "score": 1}, {"label": "Not sure", "score": 5}]},
+        ],
+        "cavgeneric_score",
+        {
+            "emergency": {"outcome": "emergency_dispatch", "message": "Cavius score indicates a likely live CO alarm.\n\n1. Evacuate immediately\n2. Open doors and windows\n3. Do not re-enter\n4. Call 999 if anyone feels unwell\n\nEmergency engineer dispatched."},
+            "monitor": {"outcome": "monitor", "message": "Cavius score is inconclusive.\n\nThis may be a false case or a true CO event. Ventilate the property, avoid fuel-burning appliances, and monitor the situation closely."},
+            "guidance": {"outcome": "close_with_guidance", "message": "Cavius score fits a maintenance or non-emergency pattern.\n\nFollow the alarm guidance for battery, fault, end-of-life, or test status."},
+        },
+    )
+
+    nodes.extend(cav4002_nodes + cavgeneric_nodes)
+    edges.extend(cav4002_edges + cavgeneric_edges)
+    return _build_manufacturer_workflow(tenant_id, CO_ALARM_SUBFLOW_CAVIUS, "cav_model", nodes, edges)
 
 
 def _create_co_alarm_other_workflow(tenant_id: str) -> WorkflowDefinition:
-    return _build_manufacturer_workflow(tenant_id, CO_ALARM_SUBFLOW_OTHER, "gen_q1", [WorkflowNode(id="gen_q1", type=WorkflowNodeType.QUESTION, data={"group": "Other", "question": "What colour light is flashing on the alarm?", "variable": "gen_led", "options": [{"label": "Red", "score": 20}, {"label": "Amber / Yellow", "score": 0}, {"label": "Green", "score": 0}, {"label": "No light", "score": 3}]}), WorkflowNode(id="gen_check_red", type=WorkflowNodeType.CONDITION, data={"group": "Other", "expression": "gen_led == 'Red'"}), WorkflowNode(id="gen_q2", type=WorkflowNodeType.QUESTION, data={"group": "Other", "question": "Is the alarm beeping loudly?", "variable": "gen_sound", "options": [{"label": "Yes - loud repeated beeps", "score": 25}, {"label": "No - chirping or silent", "score": 5}]}), WorkflowNode(id="gen_check_co", type=WorkflowNodeType.CONDITION, data={"group": "Other", "expression": "gen_sound == 'Yes - loud repeated beeps'"}), WorkflowNode(id="gen_co_out", type=WorkflowNodeType.DECISION, data={"group": "Other", "outcome": "emergency_dispatch", "message": "CO ALARM - POSSIBLE CO DETECTED.\n\n1. Evacuate NOW\n2. Open doors/windows\n3. Do NOT re-enter\n4. Call 999 if unwell\n\nEngineer dispatched."}), WorkflowNode(id="gen_schedule_out", type=WorkflowNodeType.DECISION, data={"group": "Other", "outcome": "schedule_engineer", "message": "We recommend an engineer investigates.\n\nVentilate and don't use gas appliances until checked."}), WorkflowNode(id="gen_check_amber", type=WorkflowNodeType.CONDITION, data={"group": "Other", "expression": "gen_led == 'Amber / Yellow'"}), WorkflowNode(id="gen_battery_out", type=WorkflowNodeType.DECISION, data={"group": "Other", "outcome": "close_with_guidance", "message": "Amber/yellow usually means low battery or end of life (not CO).\n\nReplace batteries or the alarm. No engineer visit needed."}), WorkflowNode(id="gen_normal_out", type=WorkflowNodeType.DECISION, data={"group": "Other", "outcome": "close_with_guidance", "message": "Alarm appears normal. Press test button to confirm.\nIf it sounds again, call us back."})], [WorkflowEdge(source="gen_q1", target="gen_check_red"), WorkflowEdge(source="gen_check_red", target="gen_q2", condition="True"), WorkflowEdge(source="gen_q2", target="gen_check_co"), WorkflowEdge(source="gen_check_co", target="gen_co_out", condition="True"), WorkflowEdge(source="gen_check_co", target="gen_schedule_out", condition="False"), WorkflowEdge(source="gen_check_red", target="gen_check_amber", condition="False"), WorkflowEdge(source="gen_check_amber", target="gen_battery_out", condition="True"), WorkflowEdge(source="gen_check_amber", target="gen_normal_out", condition="False")])
+    def _question(node_id: str, variable: str, question: str, options: list[dict]) -> WorkflowNode:
+        return WorkflowNode(
+            id=node_id,
+            type=WorkflowNodeType.QUESTION,
+            data={"group": "Other", "question": question, "variable": variable, "options": options},
+        )
+
+    questions = [
+        {"variable": "other_light", "question": "What light do you see on the alarm?", "options": [{"label": "Red", "score": 12}, {"label": "Amber / yellow", "score": 4}, {"label": "Green", "score": 1}, {"label": "No light", "score": 2}, {"label": "Cannot tell", "score": 6}]},
+        {"variable": "other_sound", "question": "What sound do you hear?", "options": [{"label": "Loud repeated alarm", "score": 25}, {"label": "Single chirp", "score": 2}, {"label": "2-3 warning chirps", "score": 4}, {"label": "Silent", "score": 1}, {"label": "Cannot tell", "score": 6}]},
+        {"variable": "other_now", "question": "What best describes it right now?", "options": [{"label": "Alarm sounding now", "score": 16}, {"label": "Was sounding, now quiet", "score": 10}, {"label": "Just warning chirps", "score": 3}, {"label": "Normal", "score": 1}, {"label": "Cannot tell", "score": 6}]},
+        {"variable": "other_repeat", "question": "How often does it happen?", "options": [{"label": "Keeps repeating", "score": 14}, {"label": "About every minute", "score": 4}, {"label": "Normal", "score": 1}, {"label": "Cannot tell", "score": 6}]},
+        {"variable": "other_issue", "question": "What does it seem like?", "options": [{"label": "Possible CO alarm", "score": 20}, {"label": "Low battery", "score": 2}, {"label": "Fault / end of life", "score": 4}, {"label": "Normal", "score": 1}, {"label": "Cannot tell", "score": 6}]},
+    ]
+
+    nodes: list[WorkflowNode] = []
+    edges: list[WorkflowEdge] = []
+    for index, question in enumerate(questions):
+        q_id = f"other_q{index + 1}"
+        nodes.append(_question(q_id, question["variable"], question["question"], question["options"]))
+        if index > 0:
+            edges.append(WorkflowEdge(source=f"other_q{index}", target=q_id))
+
+    max_score = sum(max(int(option.get("score", 0)) for option in question["options"]) for question in questions)
+    safe_score_parts = " + ".join(
+        f"int({question['variable']}_score if '{question['variable']}_score' in locals() else 0)"
+        for question in questions
+    )
+
+    nodes.extend(
+        [
+            WorkflowNode(
+                id="other_calculate_score",
+                type=WorkflowNodeType.CALCULATE,
+                data={
+                    "group": "Other",
+                    "calculation": (
+                        f"other_score = {safe_score_parts}\n"
+                        f"other_normalized_score = round((other_score / {max_score}), 3) if {max_score} else 0"
+                    ),
+                    "result_variable": "other_normalized_score",
+                },
+            ),
+            WorkflowNode(
+                id="other_risk_switch",
+                type=WorkflowNodeType.SWITCH,
+                data={
+                    "group": "Other",
+                    "variable": "other_normalized_score",
+                    "label": "Other / Cannot see risk routing",
+                    "cases": ["Emergency", "Monitor", "Guidance"],
+                },
+            ),
+            WorkflowNode(
+                id="other_emergency_out",
+                type=WorkflowNodeType.DECISION,
+                data={
+                    "group": "Other",
+                    "outcome": "emergency_dispatch",
+                    "message": "The generic alarm pattern indicates a likely live CO alarm.\n\n1. Evacuate immediately\n2. Open doors and windows\n3. Do not re-enter\n4. Call 999 if anyone feels unwell\n\nEmergency engineer dispatched.",
+                },
+            ),
+            WorkflowNode(
+                id="other_monitor_out",
+                type=WorkflowNodeType.DECISION,
+                data={
+                    "group": "Other",
+                    "outcome": "monitor",
+                    "message": "The alarm pattern is unclear.\n\nThis could be a false case or a real CO event. Ventilate the property, avoid fuel-burning appliances, and monitor the alarm closely.",
+                },
+            ),
+            WorkflowNode(
+                id="other_guidance_out",
+                type=WorkflowNodeType.DECISION,
+                data={
+                    "group": "Other",
+                    "outcome": "close_with_guidance",
+                    "message": "The generic alarm pattern fits a maintenance or non-emergency warning.\n\nFollow guidance for battery, fault, end-of-life, or test status.",
+                },
+            ),
+        ]
+    )
+
+    edges.extend(
+        [
+            WorkflowEdge(source=f"other_q{len(questions)}", target="other_calculate_score"),
+            WorkflowEdge(source="other_calculate_score", target="other_risk_switch"),
+            WorkflowEdge(source="other_risk_switch", target="other_emergency_out", condition="other_normalized_score >= 0.7"),
+            WorkflowEdge(source="other_risk_switch", target="other_monitor_out", condition="other_normalized_score >= 0.35"),
+            WorkflowEdge(source="other_risk_switch", target="other_guidance_out"),
+        ]
+    )
+
+    return _build_manufacturer_workflow(tenant_id, CO_ALARM_SUBFLOW_OTHER, "other_q1", nodes, edges)
 
 
 CO_ALARM_SUBWORKFLOW_CREATORS = {

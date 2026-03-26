@@ -1903,6 +1903,5 @@ class IncidentService:
                 notif_type="info" if agent_status != "COMPLETED" else "success",
                 incident_id=incident_id,
                 link=f"/my-reports/{incident_id}",
-            )
-
+            )      
         return incident

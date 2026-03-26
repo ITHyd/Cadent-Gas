@@ -337,6 +337,7 @@ class WorkflowEngine:
                             "str": str, "True": True, "False": False,
                             "None": None,
                         }
+                        safe_builtins["locals"] = lambda: local_vars
                         exec(calculation, {"__builtins__": safe_builtins}, local_vars)
                         
                         # Store the result

@@ -78,12 +78,23 @@ const FloatingChatWidget = forwardRef(function FloatingChatWidget(
   const wsRef = useRef(null);
   const pendingFirstInputRef = useRef(null);
   const referenceValidationPendingRef = useRef(false);
+  const reconnectTimerRef = useRef(null);
+  const reconnectAttemptsRef = useRef(0);
+  const manualCloseRef = useRef(false);
+  const incidentIdRef = useRef("");
+  const activeUseCaseRef = useRef("");
+  const hasStartedWorkflowRef = useRef(false);
+  const completedRef = useRef(false);
 
   // Expose open() so parent (hero button) can programmatically open the widget
   useImperativeHandle(ref, () => ({
     open: () => {
       setChatOpen(true);
-      if (!incidentStarted) startIncident();
+      if (!incidentStarted) {
+        startIncident();
+      } else if (!wsRef.current || wsRef.current.readyState > WebSocket.OPEN) {
+        startIncident({ reconnect: true });
+      }
     },
   }));
 
@@ -321,6 +332,14 @@ const FloatingChatWidget = forwardRef(function FloatingChatWidget(
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
+  useEffect(() => () => {
+    manualCloseRef.current = true;
+    clearTimeout(reconnectTimerRef.current);
+    if (wsRef.current && wsRef.current.readyState <= WebSocket.OPEN) {
+      wsRef.current.close();
+    }
+  }, []);
+
   const addAgentMessage = (content, data = {}) => {
     setMessages((prev) => [
       ...prev,
@@ -407,19 +426,11 @@ const FloatingChatWidget = forwardRef(function FloatingChatWidget(
 
     if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
       referenceValidationPendingRef.current = true;
-      wsRef.current.send(
-        JSON.stringify({
-          type: "start",
-          incident_id: `incident_${Date.now()}`,
-          tenant_id: tenantId,
-          user_id: effectiveUserId,
-          use_case: "",
-          initial_data: {
-            ...buildInitialDataFull(),
-            reference_id: normalizedReferenceId,
-          },
-        }),
-      );
+      activeUseCaseRef.current = "";
+      sendStartOrResume(wsRef.current, {
+        useCase: "",
+        extraInitialData: { reference_id: normalizedReferenceId },
+      });
       return;
     }
 
@@ -430,37 +441,35 @@ const FloatingChatWidget = forwardRef(function FloatingChatWidget(
     promptForReportType();
   };
 
-  const startIncident = async () => {
+  const startIncident = async ({ reconnect = false } = {}) => {
     setChatOpen(true);
+    manualCloseRef.current = false;
     const newSessionId = `session_${Date.now()}`;
     setSessionId(newSessionId);
-    setIncidentStarted(true);
-    setWorkflowStarted(false);
-    setShowAllCategories(false);
-    setSelectedReferenceId(null);
-    setIsReferenceIdPending(false);
-    setCustomerDetails(null);
-    setPhoneCollectionPhase(false);
-    referenceValidationPendingRef.current = false;
+    if (!reconnect) {
+      incidentIdRef.current = `incident_${Date.now()}`;
+      activeUseCaseRef.current = "";
+      hasStartedWorkflowRef.current = false;
+      completedRef.current = false;
+      setIncidentStarted(true);
+      setWorkflowStarted(false);
+      setShowAllCategories(false);
+      setSelectedReferenceId(null);
+      setIsReferenceIdPending(false);
+      setCustomerDetails(null);
+      setPhoneCollectionPhase(false);
+      referenceValidationPendingRef.current = false;
+    }
 
     try {
       const ws = await connectWebSocket(newSessionId);
-      wsRef.current = ws;
-
-      ws.onopen = () => {
-        setIsConnected(true);
-        promptForReferenceId({ replace: true });
-      };
-
-      ws.onmessage = (event) => {
-        const response = JSON.parse(event.data);
-        handleAgentMessage(response);
-      };
-
-      ws.onerror = () => setIsConnected(false);
-      ws.onclose = () => setIsConnected(false);
+      attachSocketHandlers(ws, { reconnect });
     } catch (error) {
       setIsConnected(false);
+      if (reconnect) {
+        scheduleReconnect();
+        return;
+      }
       setMessages([
         {
           id: `msg_${Date.now()}`,
@@ -544,6 +553,7 @@ const FloatingChatWidget = forwardRef(function FloatingChatWidget(
       }
 
       if (response.action === "open_existing_incident") {
+        completedRef.current = true;
         referenceValidationPendingRef.current = false;
         const agentMessage = {
           id: `msg_${Date.now()}`,
@@ -568,6 +578,7 @@ const FloatingChatWidget = forwardRef(function FloatingChatWidget(
 
       // Handle no-workflow
       if (response.action === "no_workflow") {
+        completedRef.current = true;
         referenceValidationPendingRef.current = false;
         const noWorkflowMsg = {
           id: `msg_${Date.now()}`,
@@ -623,6 +634,9 @@ const FloatingChatWidget = forwardRef(function FloatingChatWidget(
         };
         setMessages((prev) => [...prev, agentMessage]);
         setIsTyping(false);
+        if (response.completed) {
+          completedRef.current = true;
+        }
       }, 800);
     } else if (response.type === "error") {
       const errorMessage = {
@@ -663,6 +677,96 @@ const FloatingChatWidget = forwardRef(function FloatingChatWidget(
       : {}),
   });
 
+  const sendStartOrResume = (
+    ws,
+    { shouldResume = false, useCase = "", extraInitialData = {} } = {},
+  ) => {
+    const incidentId = incidentIdRef.current || `incident_${Date.now()}`;
+    if (!incidentIdRef.current) {
+      incidentIdRef.current = incidentId;
+    }
+
+    const resolvedUseCase = useCase || activeUseCaseRef.current || "";
+    const initialData = buildInitialDataFull(
+      resolvedUseCase
+        ? { ...extraInitialData, use_case: resolvedUseCase }
+        : extraInitialData,
+    );
+    const payload =
+      shouldResume && hasStartedWorkflowRef.current
+        ? {
+            type: "resume_session",
+            incident_id: incidentId,
+            tenant_id: tenantId,
+            user_id: effectiveUserId,
+            use_case: resolvedUseCase,
+            initial_data: initialData,
+          }
+        : {
+            type: "start",
+            incident_id: incidentId,
+            tenant_id: tenantId,
+            user_id: effectiveUserId,
+            use_case: resolvedUseCase,
+            initial_data: initialData,
+          };
+
+    if (!shouldResume) {
+      hasStartedWorkflowRef.current = true;
+    }
+
+    ws.send(JSON.stringify(payload));
+  };
+
+  const scheduleReconnect = () => {
+    if (manualCloseRef.current || completedRef.current || !incidentStarted) return;
+    reconnectAttemptsRef.current += 1;
+    const delayMs = Math.min(
+      1000 * 2 ** (reconnectAttemptsRef.current - 1),
+      10000,
+    );
+    clearTimeout(reconnectTimerRef.current);
+    reconnectTimerRef.current = setTimeout(() => {
+      startIncident({ reconnect: true });
+    }, delayMs);
+  };
+
+  const attachSocketHandlers = (ws, { reconnect = false } = {}) => {
+    wsRef.current = ws;
+
+    ws.onopen = () => {
+      setIsConnected(true);
+      reconnectAttemptsRef.current = 0;
+      if (reconnect && hasStartedWorkflowRef.current) {
+        sendStartOrResume(ws, { shouldResume: true });
+      } else {
+        promptForReferenceId({ replace: messages.length === 0 });
+      }
+    };
+
+    ws.onmessage = (event) => {
+      const response = JSON.parse(event.data);
+      handleAgentMessage(response);
+    };
+
+    ws.onerror = (event) => {
+      console.error("[FloatingChatWidget][WebSocket] error", event);
+      setIsConnected(false);
+    };
+
+    ws.onclose = (event) => {
+      console.warn("[FloatingChatWidget][WebSocket] closed", {
+        code: event.code,
+        reason: event.reason,
+        wasClean: event.wasClean,
+      });
+      setIsConnected(false);
+      wsRef.current = null;
+      if (manualCloseRef.current || completedRef.current) return;
+      scheduleReconnect();
+    };
+  };
+
   const handleCategorySelect = (useCase, displayName) => {
     if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
 
@@ -677,17 +781,8 @@ const FloatingChatWidget = forwardRef(function FloatingChatWidget(
     ]);
     setWorkflowStarted(true);
     pendingFirstInputRef.current = displayName;
-
-    wsRef.current.send(
-      JSON.stringify({
-        type: "start",
-        incident_id: `incident_${Date.now()}`,
-        tenant_id: tenantId,
-        user_id: effectiveUserId,
-        use_case: useCase,
-        initial_data: buildInitialDataFull({ use_case: useCase }),
-      }),
-    );
+    activeUseCaseRef.current = useCase;
+    sendStartOrResume(wsRef.current, { useCase });
   };
 
   const handleIncidentOptionClick = (option) => {
@@ -831,16 +926,8 @@ const FloatingChatWidget = forwardRef(function FloatingChatWidget(
     if (!workflowStarted) {
       setWorkflowStarted(true);
       pendingFirstInputRef.current = text;
-      wsRef.current.send(
-        JSON.stringify({
-          type: "start",
-          incident_id: `incident_${Date.now()}`,
-          tenant_id: tenantId,
-          user_id: effectiveUserId,
-          use_case: "",
-          initial_data: buildInitialDataFull(),
-        }),
-      );
+      activeUseCaseRef.current = "";
+      sendStartOrResume(wsRef.current, { useCase: "" });
     } else {
       wsRef.current.send(
         JSON.stringify({
@@ -883,7 +970,11 @@ const FloatingChatWidget = forwardRef(function FloatingChatWidget(
           style={styles.chatFab}
           onClick={() => {
             setChatOpen(true);
-            if (!incidentStarted) startIncident();
+            if (!incidentStarted) {
+              startIncident();
+            } else if (!wsRef.current || wsRef.current.readyState > WebSocket.OPEN) {
+              startIncident({ reconnect: true });
+            }
           }}
           onMouseEnter={(e) => {
             e.currentTarget.style.transform = "scale(1.1)";
@@ -926,7 +1017,14 @@ const FloatingChatWidget = forwardRef(function FloatingChatWidget(
                 </div>
                 <button
                   style={styles.closeBtn}
-                  onClick={() => setChatOpen(false)}
+                  onClick={() => {
+                    manualCloseRef.current = true;
+                    clearTimeout(reconnectTimerRef.current);
+                    if (wsRef.current && wsRef.current.readyState <= WebSocket.OPEN) {
+                      wsRef.current.close();
+                    }
+                    setChatOpen(false);
+                  }}
                   onMouseEnter={(e) => {
                     e.currentTarget.style.backgroundColor = "#e2e8f0";
                   }}
