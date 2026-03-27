@@ -1,5 +1,6 @@
 """Workflow-first agent orchestrator with topic-drift, switching & edge-case handling."""
 import base64
+import asyncio
 import json
 import logging
 import time
@@ -46,6 +47,62 @@ class AgentOrchestrator:
         self.incident_service = IncidentService()
         self.active_sessions: Dict[str, Dict[str, Any]] = {}
 
+    async def load_sessions_from_db(self) -> None:
+        db = get_database()
+        if db is None:
+            return
+        docs = await db.agent_sessions.find({}, {"_id": 0}).to_list(None)
+        self.active_sessions = {}
+        for doc in docs:
+            session_id = doc.get("session_id")
+            if not session_id:
+                continue
+            created_at = doc.get("created_at")
+            if isinstance(created_at, str):
+                try:
+                    doc["created_at"] = datetime.fromisoformat(created_at)
+                except Exception:
+                    doc["created_at"] = datetime.utcnow()
+            self.active_sessions[session_id] = doc
+        logger.info("Loaded agent sessions from MongoDB: %d", len(self.active_sessions))
+
+    async def _persist_session(self, session: Dict[str, Any]) -> None:
+        db = get_database()
+        if db is None or not session:
+            return
+        payload = dict(session)
+        payload["updated_at"] = datetime.utcnow().isoformat()
+        if isinstance(payload.get("created_at"), datetime):
+            payload["created_at"] = payload["created_at"].isoformat()
+        await db.agent_sessions.replace_one(
+            {"session_id": payload["session_id"]},
+            payload,
+            upsert=True,
+        )
+
+    async def _delete_session_from_db(self, session_id: str) -> None:
+        db = get_database()
+        if db is None:
+            return
+        await db.agent_sessions.delete_one({"session_id": session_id})
+
+    def _schedule_persist_session(self, session_id: str) -> None:
+        session = self.active_sessions.get(session_id)
+        if not session:
+            return
+        try:
+            loop = asyncio.get_running_loop()
+            loop.create_task(self._persist_session(session))
+        except RuntimeError:
+            pass
+
+    def _schedule_delete_session(self, session_id: str) -> None:
+        try:
+            loop = asyncio.get_running_loop()
+            loop.create_task(self._delete_session_from_db(session_id))
+        except RuntimeError:
+            pass
+
     def _create_session_record(
         self,
         incident_id: str,
@@ -88,6 +145,7 @@ class AgentOrchestrator:
             "structured_data": structured_data,
             "created_at": datetime.utcnow(),
         }
+        self._schedule_persist_session(session_id)
         return session_id
 
     # ╔══════════════════════════════════════════════════════════════════════╗
@@ -1671,20 +1729,30 @@ class AgentOrchestrator:
 
         kb_similarity = decision_support.get("kb_similarity")
         kb_match_type = decision_support.get("kb_match_type")
+        incident_pattern = self.kb_service.build_incident_pattern(
+            structured_data,
+            use_case=use_case,
+            workflow_outcome=final_outcome,
+            incident_id=incident_id,
+        )
 
         # Store KB + risk results in structured_data for frontend display
         structured_data["_kb_validation"] = {
             "verdict": kb_match_type,
+            "true_kb_match": round(kb_result.get("true_kb_match", 0), 3) if kb_result else 0,
             "true_kb_score": round(kb_result.get("true_kb_match", 0), 3) if kb_result else 0,
+            "false_kb_match": round(kb_result.get("false_kb_match", 0), 3) if kb_result else 0,
             "false_kb_score": round(kb_result.get("false_kb_match", 0), 3) if kb_result else 0,
             "confidence": round(kb_result.get("confidence", 0), 3) if kb_result else 0,
-            "explicit_split": bool(kb_result.get("explicit_split", False)) if kb_result else False,
             "best_match_id": kb_result.get("best_match_id") if kb_result else None,
             "matched_kb_id": kb_result.get("best_match_id") if kb_result else None,
             "explanation": kb_result.get("explanation", "") if kb_result else "",
             "matched_entry": kb_result.get("matched_entry") if kb_result else None,
             "all_matches": kb_result.get("all_matches", []) if kb_result else [],
+            "top_true_matches": kb_result.get("top_true_matches", []) if kb_result else [],
+            "top_false_matches": kb_result.get("top_false_matches", []) if kb_result else [],
         }
+        structured_data["_incident_pattern"] = incident_pattern
         
         # Debug logging for KB validation
         logger.info(f"[{session_id}] KB Validation Result: verdict={kb_match_type}, "
@@ -1706,6 +1774,7 @@ class AgentOrchestrator:
             "final_outcome": final_outcome,
         }
         session["structured_data"] = structured_data
+        self.kb_service.add_incident_pattern(incident_pattern)
 
         # ── Finalize incident ─────────────────────────────────────────
         if incident_id and outcome_enum:
@@ -1717,12 +1786,27 @@ class AgentOrchestrator:
                 kb_similarity_score=kb_similarity,
                 kb_match_type=kb_match_type,
                 kb_validation_details=kb_result,
+                incident_pattern=incident_pattern,
                 workflow_execution_id=execution_id,
             )
             self.incident_service.update_incident(
                 incident_id,
                 structured_data=structured_data,
             )
+            if kb_match_type in ("true", "false"):
+                finalized_incident = self.incident_service.get_incident(incident_id)
+                if finalized_incident:
+                    promoted_kb_id = self.kb_service.promote_incident_to_verified_kb(
+                        finalized_incident,
+                        target_type=kb_match_type,
+                        reviewed_by="system",
+                        review_notes="Auto-added from initial KB verification",
+                    )
+                    structured_data["_kb_validation"]["promoted_kb_id"] = promoted_kb_id
+                    self.incident_service.update_incident(
+                        incident_id,
+                        structured_data=structured_data,
+                    )
         elif incident_id:
             self.incident_service.update_incident(
                 incident_id,
@@ -1899,7 +1983,11 @@ class AgentOrchestrator:
 
         kb_result = None
         try:
-            kb_result = self.kb_service.verify_incident(structured_data, use_case)
+            kb_result = self.kb_service.verify_incident(
+                structured_data,
+                use_case,
+                workflow_outcome=workflow_outcome,
+            )
         except Exception as exc:
             logger.error("KB verification failed for %s: %s", use_case, exc)
             kb_result = {
@@ -2137,6 +2225,7 @@ class AgentOrchestrator:
             session["conversation_history"].append(
                 {"timestamp": datetime.utcnow().isoformat(), "role": role, "content": content}
             )
+            self._schedule_persist_session(session_id)
 
     def get_conversation_history(self, session_id: str) -> list:
         session = self.active_sessions.get(session_id)
@@ -2159,6 +2248,7 @@ class AgentOrchestrator:
         # Nothing to persist if the workflow already completed
         if session.get("completed"):
             self.active_sessions.pop(session_id, None)
+            self._schedule_delete_session(session_id)
             return
 
         incident_id = session.get("incident_id")
@@ -2194,6 +2284,7 @@ class AgentOrchestrator:
 
         # Clean up the in-memory session
         self.active_sessions.pop(session_id, None)
+        self._schedule_delete_session(session_id)
 
     def get_paused_incidents(self, user_id: str, tenant_id: Optional[str] = None) -> list:
         """Return incidents the user can resume."""
@@ -2244,6 +2335,7 @@ class AgentOrchestrator:
             status=IncidentStatus.IN_PROGRESS,
             workflow_snapshot=None,
         )
+        self._schedule_persist_session(session_id)
 
         logger.info(f"[{session_id}] Resumed paused incident {incident_id} (use_case={use_case})")
 

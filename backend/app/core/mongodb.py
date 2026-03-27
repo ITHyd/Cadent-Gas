@@ -32,6 +32,35 @@ async def connect_to_mongo():
     await mongodb.db.tenants.create_index("branding.subdomain", unique=True, sparse=True)
     await mongodb.db.tenants.create_index("status")
 
+    # Incidents
+    await mongodb.db.incidents.create_index("incident_id", unique=True)
+    await mongodb.db.incidents.create_index([("tenant_id", 1), ("created_at", -1)])
+    await mongodb.db.incidents.create_index([("user_id", 1), ("created_at", -1)])
+    await mongodb.db.incidents.create_index([("status", 1), ("created_at", -1)])
+    await mongodb.db.incidents.create_index("reference_id", sparse=True)
+
+    # Workflow definitions (one document per version)
+    await mongodb.db.workflow_definitions.create_index(
+        [("workflow_id", 1), ("version", 1)],
+        unique=True,
+    )
+    await mongodb.db.workflow_definitions.create_index([("tenant_id", 1), ("use_case", 1)])
+    await mongodb.db.workflow_definitions.create_index([("workflow_id", 1), ("is_active", 1)])
+
+    # Agent sessions / live chat state
+    await mongodb.db.agent_sessions.create_index("session_id", unique=True)
+    await mongodb.db.agent_sessions.create_index([("incident_id", 1), ("updated_at", -1)])
+    await mongodb.db.agent_sessions.create_index([("user_id", 1), ("updated_at", -1)])
+
+    # User notifications
+    await mongodb.db.user_notifications.create_index("notification_id", unique=True)
+    await mongodb.db.user_notifications.create_index([("user_id", 1), ("created_at", -1)])
+    await mongodb.db.user_notifications.create_index([("user_id", 1), ("read", 1), ("created_at", -1)])
+
+    # Agents
+    await mongodb.db.agents.create_index("agent_id", unique=True)
+    await mongodb.db.agents.create_index([("is_available", 1), ("location_area", 1)])
+
     # Connector collections
     await mongodb.db.connector_configs.create_index(
         [("tenant_id", 1), ("connector_type", 1)],

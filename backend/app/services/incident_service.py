@@ -1,10 +1,12 @@
 """Incident Service for persistence and lifecycle management"""
+import asyncio
 import logging
 import re
 from typing import Dict, Any, List, Optional
 from datetime import datetime, timedelta
 import uuid
 
+from app.core.mongodb import get_database
 from app.models.incident import (
     Incident, IncidentStatus, IncidentOutcome, IncidentMedia, Agent
 )
@@ -125,6 +127,120 @@ class IncidentService:
         # Connector sync service (injected at startup, optional)
         self._sync_service = None
         self._seed_agents()
+
+    async def load_from_db(self, db=None) -> None:
+        if db is None:
+            db = get_database()
+        if db is None:
+            return
+
+        docs = await db.incidents.find({}, {"_id": 0}).to_list(None)
+        self.incidents = {}
+        max_existing = self._incident_sequence
+
+        for doc in docs:
+            try:
+                incident = Incident.model_validate(doc)
+                self.incidents[incident.incident_id] = incident
+                match = re.fullmatch(r"INC-(\d+)", str(incident.incident_id).upper())
+                if match:
+                    max_existing = max(max_existing, int(match.group(1)))
+            except Exception as exc:
+                logger.error("Failed to hydrate incident from MongoDB: %s", exc)
+
+        self._incident_sequence = max_existing
+        logger.info("Loaded incidents from MongoDB: %d", len(self.incidents))
+
+        notif_docs = await db.user_notifications.find({}, {"_id": 0}).sort(
+            [("user_id", 1), ("created_at", -1)]
+        ).to_list(None)
+        self.user_notifications = {}
+        for notif in notif_docs:
+            uid = notif.get("user_id")
+            if not uid:
+                continue
+            self.user_notifications.setdefault(uid, []).append(notif)
+        for uid in list(self.user_notifications.keys()):
+            self.user_notifications[uid] = self.user_notifications[uid][:100]
+        logger.info("Loaded notifications from MongoDB: %d", len(notif_docs))
+
+        agent_docs = await db.agents.find({}, {"_id": 0}).to_list(None)
+        if agent_docs:
+            self.agents = {}
+            for doc in agent_docs:
+                try:
+                    agent = Agent.model_validate(doc)
+                    self.agents[agent.agent_id] = agent
+                except Exception as exc:
+                    logger.error("Failed to hydrate agent from MongoDB: %s", exc)
+            logger.info("Loaded agents from MongoDB: %d", len(self.agents))
+        else:
+            for agent in self.agents.values():
+                await self._persist_agent(agent)
+            logger.info("Seeded agents to MongoDB: %d", len(self.agents))
+
+    async def _persist_incident(self, incident: Incident) -> None:
+        db = get_database()
+        if db is None:
+            return
+        await db.incidents.replace_one(
+            {"incident_id": incident.incident_id},
+            incident.model_dump(mode="json"),
+            upsert=True,
+        )
+
+    async def _persist_notification(self, notification: Dict[str, Any]) -> None:
+        db = get_database()
+        if db is None:
+            return
+        await db.user_notifications.replace_one(
+            {"notification_id": notification["notification_id"]},
+            dict(notification),
+            upsert=True,
+        )
+
+    async def _persist_agent(self, agent: Agent) -> None:
+        db = get_database()
+        if db is None:
+            return
+        await db.agents.replace_one(
+            {"agent_id": agent.agent_id},
+            agent.model_dump(mode="json"),
+            upsert=True,
+        )
+
+    async def _delete_incident_from_db(self, incident_id: str) -> None:
+        db = get_database()
+        if db is None:
+            return
+        await db.incidents.delete_one({"incident_id": incident_id})
+
+    def _schedule_persist_incident(self, incident: Optional[Incident]) -> None:
+        if incident is None:
+            return
+        try:
+            loop = asyncio.get_running_loop()
+            loop.create_task(self._persist_incident(incident))
+        except RuntimeError:
+            pass
+
+    def _schedule_persist_notification(self, notification: Optional[Dict[str, Any]]) -> None:
+        if notification is None:
+            return
+        try:
+            loop = asyncio.get_running_loop()
+            loop.create_task(self._persist_notification(notification))
+        except RuntimeError:
+            pass
+
+    def _schedule_persist_agent(self, agent: Optional[Agent]) -> None:
+        if agent is None:
+            return
+        try:
+            loop = asyncio.get_running_loop()
+            loop.create_task(self._persist_agent(agent))
+        except RuntimeError:
+            pass
 
     def set_sync_service(self, sync_service) -> None:
         """Inject the ConnectorSyncService for outbound sync."""
@@ -301,6 +417,7 @@ class IncidentService:
         self.user_notifications[user_id].insert(0, notif)
         # Cap at 100 notifications per user
         self.user_notifications[user_id] = self.user_notifications[user_id][:100]
+        self._schedule_persist_notification(notif)
         logger.info(f"Notification pushed to {user_id}: {title}")
         return notif
 
@@ -348,6 +465,7 @@ class IncidentService:
         for notif in self.user_notifications.get(user_id, []):
             if notif["notification_id"] == notification_id:
                 notif["read"] = True
+                self._schedule_persist_notification(notif)
                 return True
         return False
 
@@ -357,6 +475,7 @@ class IncidentService:
         for notif in self.user_notifications.get(user_id, []):
             if not notif.get("read"):
                 notif["read"] = True
+                self._schedule_persist_notification(notif)
                 count += 1
         return count
 
@@ -418,6 +537,7 @@ class IncidentService:
             "timestamp": datetime.utcnow().isoformat(),
             "message": message,
         })
+        self._schedule_persist_incident(incident)
 
     @staticmethod
     def _validate_coordinates(lat: float, lng: float) -> None:
@@ -767,6 +887,7 @@ class IncidentService:
         )
 
         self.incidents[incident_id] = incident
+        self._schedule_persist_incident(incident)
         logger.info(f"✅ INCIDENT CREATED: {incident_id} for user={user_id}, tenant={tenant_id}, type={incident_type}")
         logger.info(f"   Total incidents in memory: {len(self.incidents)}")
 
@@ -809,6 +930,7 @@ class IncidentService:
                 setattr(incident, key, value)
         
         incident.updated_at = datetime.utcnow()
+        self._schedule_persist_incident(incident)
         
         logger.info(f"Updated incident {incident_id}: {list(updates.keys())}")
         return incident
@@ -822,6 +944,7 @@ class IncidentService:
         kb_similarity_score: Optional[float] = None,
         kb_match_type: Optional[str] = None,
         kb_validation_details: Optional[Dict[str, Any]] = None,
+        incident_pattern: Optional[Dict[str, Any]] = None,
         workflow_execution_id: Optional[str] = None
     ) -> Optional[Incident]:
         """
@@ -835,6 +958,7 @@ class IncidentService:
             kb_similarity_score: KB similarity score
             kb_match_type: "true" | "false" | "unknown"
             kb_validation_details: Full KB verification result dict
+            incident_pattern: Normalized incident pattern for future KB learning/matching
             workflow_execution_id: Workflow execution ID
 
         Returns:
@@ -865,6 +989,7 @@ class IncidentService:
         incident.kb_similarity_score = kb_similarity_score
         incident.kb_match_type = kb_match_type
         incident.kb_validation_details = kb_validation_details
+        incident.incident_pattern = incident_pattern
         incident.workflow_execution_id = workflow_execution_id
         incident.status = status
         incident.completed_at = datetime.utcnow()
@@ -896,6 +1021,8 @@ class IncidentService:
                 asyncio.ensure_future(self._sync_service.on_incident_finalized(incident))
             except Exception as e:
                 logger.error(f"Outbound sync failed for {incident_id}: {e}")
+
+        self._schedule_persist_incident(incident)
 
         return incident
     
@@ -934,6 +1061,7 @@ class IncidentService:
         agent_name = agent.full_name if agent else agent_id
         if agent:
             agent.is_available = False
+            self._schedule_persist_agent(agent)
         self._add_status_history(
             incident, "dispatched",
             f"{agent_name} assigned and on their way. Estimated arrival in {minutes} minutes."
@@ -1001,6 +1129,7 @@ class IncidentService:
             incident.agent_location_history = []
         incident.agent_location_history.append(point)
         incident.updated_at = datetime.utcnow()
+        self._schedule_persist_incident(incident)
         return incident
 
     def add_field_milestone(
@@ -1361,6 +1490,7 @@ class IncidentService:
             agent = self.agents.get(incident.assigned_agent_id)
             if agent:
                 agent.is_available = True
+                self._schedule_persist_agent(agent)
 
         logger.info(f"Marked incident {incident_id} as resolved by {resolved_by}")
 
@@ -1477,6 +1607,11 @@ class IncidentService:
             return False
 
         del self.incidents[incident_id]
+        try:
+            loop = asyncio.get_running_loop()
+            loop.create_task(self._delete_incident_from_db(incident_id))
+        except RuntimeError:
+            pass
         logger.info(f"Deleted incident {incident_id}")
         return True
 
@@ -1594,9 +1729,6 @@ class IncidentService:
                 continue
             # Apply status filter if provided
             if status_filter is not None and incident.status not in status_filter:
-                continue
-            # Skip false reports
-            if incident.status == IncidentStatus.FALSE_REPORT:
                 continue
             # Apply connector scope filter (non-empty = restricted)
             if connector_scope and not self._matches_connector_scope(incident, connector_scope):

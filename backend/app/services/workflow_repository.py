@@ -1,7 +1,9 @@
 """In-memory storage for graph-based workflow definitions."""
+import asyncio
 from datetime import datetime, timezone
 from typing import Dict, List, Optional
 
+from app.core.mongodb import get_database
 from app.schemas.workflow_definition import (
     WorkflowDefinition,
     WorkflowEdge,
@@ -19,6 +21,66 @@ class WorkflowRepository:
         self._store: Dict[str, List[WorkflowDefinition]] = {}
         self._active_versions: Dict[str, int] = {}  # workflow_id -> active version number
 
+    async def load_from_db(self) -> None:
+        db = get_database()
+        if db is None:
+            return
+
+        docs = await db.workflow_definitions.find({}, {"_id": 0}).sort(
+            [("workflow_id", 1), ("version", 1)]
+        ).to_list(None)
+
+        self._store = {}
+        self._active_versions = {}
+
+        for doc in docs:
+            is_active = bool(doc.pop("is_active", False))
+            workflow = WorkflowDefinition.model_validate(doc)
+            versions = self._store.setdefault(workflow.workflow_id, [])
+            versions.append(workflow)
+            if is_active:
+                self._active_versions[workflow.workflow_id] = workflow.version
+
+        for workflow_id, versions in self._store.items():
+            versions.sort(key=lambda item: item.version)
+            if workflow_id not in self._active_versions and versions:
+                self._active_versions[workflow_id] = max(versions, key=lambda item: item.version).version
+
+    async def _persist_workflow(self, workflow: WorkflowDefinition, is_active: bool) -> None:
+        db = get_database()
+        if db is None:
+            return
+        doc = workflow.model_dump(mode="json")
+        doc["is_active"] = is_active
+        await db.workflow_definitions.replace_one(
+            {"workflow_id": workflow.workflow_id, "version": workflow.version},
+            doc,
+            upsert=True,
+        )
+
+    async def _persist_active_state(self, workflow_id: str) -> None:
+        db = get_database()
+        if db is None:
+            return
+        active_version = self._active_versions.get(workflow_id)
+        await db.workflow_definitions.update_many(
+            {"workflow_id": workflow_id},
+            [{"$set": {"is_active": {"$eq": ["$version", active_version]}}}],
+        )
+
+    async def _delete_version_from_db(self, workflow_id: str, version: int) -> None:
+        db = get_database()
+        if db is None:
+            return
+        await db.workflow_definitions.delete_one({"workflow_id": workflow_id, "version": version})
+
+    def _schedule_coro(self, coro) -> None:
+        try:
+            loop = asyncio.get_running_loop()
+            loop.create_task(coro)
+        except RuntimeError:
+            pass
+
     def save(self, workflow: WorkflowDefinition) -> WorkflowDefinition:
         versions = self._store.setdefault(workflow.workflow_id, [])
         if any(existing.version == workflow.version for existing in versions):
@@ -33,6 +95,12 @@ class WorkflowRepository:
         # Auto-activate the first version of a new workflow
         if workflow.workflow_id not in self._active_versions:
             self._active_versions[workflow.workflow_id] = workflow.version
+        self._schedule_coro(
+            self._persist_workflow(
+                stored_workflow,
+                is_active=self._active_versions.get(workflow.workflow_id) == stored_workflow.version,
+            )
+        )
         return stored_workflow.model_copy(deep=True)
 
     def update(
@@ -58,6 +126,8 @@ class WorkflowRepository:
         versions.sort(key=lambda item: item.version)
         # Auto-activate newly created versions
         self._active_versions[workflow_id] = new_version.version
+        self._schedule_coro(self._persist_workflow(new_version, is_active=True))
+        self._schedule_coro(self._persist_active_state(workflow_id))
         return new_version.model_copy(deep=True)
 
     def get_by_id(self, workflow_id: str) -> Optional[WorkflowDefinition]:
@@ -156,6 +226,9 @@ class WorkflowRepository:
         )
         versions.append(new_version)
         versions.sort(key=lambda item: item.version)
+        self._active_versions[workflow_id] = new_version.version
+        self._schedule_coro(self._persist_workflow(new_version, is_active=True))
+        self._schedule_coro(self._persist_active_state(workflow_id))
         return new_version.model_copy(deep=True)
 
     def rename_version(self, workflow_id: str, version: int, label: str) -> WorkflowDefinition:
@@ -166,6 +239,12 @@ class WorkflowRepository:
             if wf.version == version:
                 wf.version_label = label
                 wf.updated_at = _utc_now()
+                self._schedule_coro(
+                    self._persist_workflow(
+                        wf,
+                        is_active=self._active_versions.get(workflow_id) == wf.version,
+                    )
+                )
                 return wf.model_copy(deep=True)
         raise KeyError(f"Workflow '{workflow_id}' version '{version}' not found")
 
@@ -184,6 +263,8 @@ class WorkflowRepository:
             # If we deleted the active version, activate the highest remaining
             if self._active_versions.get(workflow_id) == version:
                 self._active_versions[workflow_id] = max(remaining, key=lambda w: w.version).version
+            self._schedule_coro(self._persist_active_state(workflow_id))
+        self._schedule_coro(self._delete_version_from_db(workflow_id, version))
 
     def activate_version(self, workflow_id: str, version: int) -> WorkflowDefinition:
         versions = self._store.get(workflow_id)
@@ -192,6 +273,7 @@ class WorkflowRepository:
         for wf in versions:
             if wf.version == version:
                 self._active_versions[workflow_id] = version
+                self._schedule_coro(self._persist_active_state(workflow_id))
                 return wf.model_copy(deep=True)
         raise KeyError(f"Workflow '{workflow_id}' version '{version}' not found")
 

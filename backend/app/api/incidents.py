@@ -881,7 +881,10 @@ async def add_user_note(
         user_notes = incident.structured_data.get("_user_notes", [])
         user_notes.append(note_entry)
         incident.structured_data["_user_notes"] = user_notes
-        incident.updated_at = datetime.utcnow()
+        orchestrator.incident_service.update_incident(
+            incident_id,
+            structured_data=incident.structured_data,
+        )
 
         return {"incident_id": incident_id, "note": note_entry}
     except HTTPException:
@@ -910,7 +913,10 @@ async def update_user_note(
                 n["note"] = payload.note
                 n["updated_at"] = datetime.utcnow().isoformat()
                 incident.structured_data["_user_notes"] = user_notes
-                incident.updated_at = datetime.utcnow()
+                orchestrator.incident_service.update_incident(
+                    incident_id,
+                    structured_data=incident.structured_data,
+                )
                 return {"incident_id": incident_id, "note": n}
 
         raise HTTPException(status_code=404, detail="Note not found")
@@ -941,7 +947,10 @@ async def delete_user_note(
             raise HTTPException(status_code=404, detail="Note not found")
 
         incident.structured_data["_user_notes"] = user_notes
-        incident.updated_at = datetime.utcnow()
+        orchestrator.incident_service.update_incident(
+            incident_id,
+            structured_data=incident.structured_data,
+        )
         return {"incident_id": incident_id, "deleted_note_id": note_id}
     except HTTPException:
         raise
@@ -969,7 +978,10 @@ async def update_sms_preference(
             "phone": payload.phone or incident.user_phone,
             "updated_at": datetime.utcnow().isoformat(),
         }
-        incident.updated_at = datetime.utcnow()
+        orchestrator.incident_service.update_incident(
+            incident_id,
+            structured_data=incident.structured_data,
+        )
 
         return {
             "incident_id": incident_id,
@@ -1301,32 +1313,66 @@ async def validate_incident(
     if not incident:
         raise HTTPException(status_code=404, detail="Incident not found")
 
-    if incident.status.value not in ("new", "in_progress"):
+    if incident.status.value not in ("new", "in_progress", "pending_company_action", "false_report", "completed"):
         raise HTTPException(
             status_code=400,
-            detail="Only new or in-progress incidents can be validated",
+            detail="Only reviewable incidents can be validated",
         )
 
     kb_service = orchestrator.kb_service
-    incident_data = {
-        "description": incident.description or "",
-        "severity": "medium",
-        "location": incident.location,
-        "incident_type": incident.incident_type,
-    }
     use_case = incident.incident_type or incident.classified_use_case or ""
-    kb_result = kb_service.verify_incident(incident_data, use_case)
+    structured_data = dict(incident.structured_data or {})
+    stored_pattern = incident.incident_pattern or structured_data.get("_incident_pattern")
+    if stored_pattern:
+        incident_pattern = dict(stored_pattern)
+        incident_pattern["incident_id"] = incident.incident_id
+        if not incident_pattern.get("use_case"):
+            incident_pattern["use_case"] = use_case
+        if not incident_pattern.get("workflow_outcome"):
+            incident_pattern["workflow_outcome"] = getattr(incident.outcome, "value", incident.outcome)
+        kb_result = kb_service.verify_incident_pattern(incident_pattern)
+    else:
+        incident_data = dict(structured_data)
+        incident_data.update(
+            {
+                "incident_id": incident.incident_id,
+                "description": incident.description or incident_data.get("description", ""),
+                "location": incident.location or incident_data.get("location"),
+                "incident_type": incident.incident_type or incident_data.get("incident_type"),
+            }
+        )
+        kb_result = kb_service.verify_incident(
+            incident_data,
+            use_case,
+            workflow_outcome=getattr(incident.outcome, "value", incident.outcome),
+        )
+
+    structured_data["_kb_validation"] = {
+        "verdict": kb_result.get("best_match_type", "unknown"),
+        "confidence": kb_result.get("confidence", 0),
+        "true_kb_match": round(kb_result.get("true_kb_match", 0), 3),
+        "true_kb_score": round(kb_result.get("true_kb_match", 0), 3),
+        "false_kb_match": round(kb_result.get("false_kb_match", 0), 3),
+        "false_kb_score": round(kb_result.get("false_kb_match", 0), 3),
+        "top_true_matches": kb_result.get("top_true_matches", []),
+        "top_false_matches": kb_result.get("top_false_matches", []),
+        "matched_entry": kb_result.get("matched_entry"),
+        "explanation": kb_result.get("explanation", ""),
+    }
 
     incident_service.update_incident(
         incident_id,
         kb_similarity_score=kb_result.get("confidence", 0),
         kb_match_type=kb_result.get("best_match_type", "unknown"),
         kb_validation_details=kb_result,
+        incident_pattern=kb_result.get("incident_pattern"),
+        structured_data=structured_data,
     )
 
     return {
         "incident_id": incident_id,
         "validation": kb_result,
+        "kb_entry_id": None,
         "status": incident.status.value,
     }
 
@@ -1342,21 +1388,49 @@ async def mark_incident_false(
     orchestrator=Depends(get_orchestrator),
     current_user: dict = Depends(get_current_user),
 ):
-    """Mark an incident as a false report. Syncs status back to external system."""
+    """Reviewer override: classify incident as false and move verified KB entry."""
     incident_service = orchestrator.incident_service
+    kb_service = orchestrator.kb_service
     incident = incident_service.get_incident(incident_id)
     if not incident:
         raise HTTPException(status_code=404, detail="Incident not found")
 
-    notes = body.notes or "Marked as false report by admin after KB validation"
+    notes = body.notes or "Marked as false report by reviewer after KB validation"
 
     incident.status = IncidentStatus.FALSE_REPORT
     incident.outcome = IncidentOutcome.FALSE_REPORT
     incident.resolution_notes = notes
     incident.updated_at = datetime.utcnow()
+    incident.kb_match_type = "false"
+    incident.kb_similarity_score = 1.0
+    if not incident.structured_data:
+        incident.structured_data = {}
+    incident.structured_data.setdefault("_kb_validation", {})
+    incident.structured_data["_kb_validation"]["verdict"] = "false"
+    incident.structured_data["_kb_validation"]["reviewer_override"] = True
+    incident.structured_data["_kb_validation"]["reviewed_by"] = current_user.get("user_id", "admin")
+    incident.structured_data["_kb_validation"]["review_notes"] = notes
+
+    promoted_kb_id = kb_service.promote_incident_to_verified_kb(
+        incident,
+        target_type="false",
+        reviewed_by=current_user.get("user_id", "admin"),
+        review_notes=notes,
+    )
+    incident.structured_data["_kb_validation"]["promoted_kb_id"] = promoted_kb_id
+    incident.kb_validation_details = {
+        **(incident.kb_validation_details or {}),
+        "verdict": "false",
+        "best_match_type": "false",
+        "confidence": 1.0,
+        "promoted_kb_id": promoted_kb_id,
+        "reviewer_override": True,
+        "reviewed_by": current_user.get("user_id", "admin"),
+        "review_notes": notes,
+    }
 
     incident_service._add_status_history(
-        incident, "false_report", "Incident marked as false report by admin"
+        incident, "false_report", "Incident marked as false report by reviewer"
     )
 
     # Trigger outbound sync to external system (SAP / ServiceNow)
@@ -1376,6 +1450,8 @@ async def mark_incident_false(
     return {
         "incident_id": incident_id,
         "status": "false_report",
+        "kb_match_type": "false",
+        "kb_entry_id": promoted_kb_id,
         "synced": synced,
     }
 
@@ -1386,26 +1462,52 @@ async def confirm_incident_valid(
     orchestrator=Depends(get_orchestrator),
     current_user: dict = Depends(get_current_user),
 ):
-    """Admin override: confirm an external incident as valid after KB review.
-
-    Sets kb_match_type to 'admin_confirmed' and moves the incident to
-    pending_company_action so it can be assigned to an agent.
-    """
+    """Reviewer override: classify incident as true and move verified KB entry."""
     incident_service = orchestrator.incident_service
+    kb_service = orchestrator.kb_service
     incident = incident_service.get_incident(incident_id)
     if not incident:
         raise HTTPException(status_code=404, detail="Incident not found")
 
-    if incident.status.value not in ("new", "in_progress"):
+    if incident.status.value not in ("new", "in_progress", "false_report", "pending_company_action"):
         raise HTTPException(
             status_code=400,
-            detail="Only new or in-progress incidents can be confirmed",
+            detail="Only reviewable incidents can be confirmed",
         )
 
     incident_service.update_incident(
         incident_id,
-        kb_match_type="admin_confirmed",
+        kb_match_type="true",
+        kb_similarity_score=1.0,
     )
+    incident = incident_service.get_incident(incident_id)
+    if not incident:
+        raise HTTPException(status_code=404, detail="Incident not found")
+    if not incident.structured_data:
+        incident.structured_data = {}
+    incident.structured_data.setdefault("_kb_validation", {})
+    incident.structured_data["_kb_validation"]["verdict"] = "true"
+    incident.structured_data["_kb_validation"]["reviewer_override"] = True
+    incident.structured_data["_kb_validation"]["reviewed_by"] = current_user.get("user_id", "admin")
+    incident.structured_data["_kb_validation"]["review_notes"] = "Confirmed as true incident by reviewer"
+
+    promoted_kb_id = kb_service.promote_incident_to_verified_kb(
+        incident,
+        target_type="true",
+        reviewed_by=current_user.get("user_id", "admin"),
+        review_notes="Confirmed as true incident by reviewer",
+    )
+    incident.structured_data["_kb_validation"]["promoted_kb_id"] = promoted_kb_id
+    incident.kb_validation_details = {
+        **(incident.kb_validation_details or {}),
+        "verdict": "true",
+        "best_match_type": "true",
+        "confidence": 1.0,
+        "promoted_kb_id": promoted_kb_id,
+        "reviewer_override": True,
+        "reviewed_by": current_user.get("user_id", "admin"),
+        "review_notes": "Confirmed as true incident by reviewer",
+    }
 
     # Move to pending_company_action so Assign Agent flow works
     incident.status = IncidentStatus.PENDING_COMPANY_ACTION
@@ -1413,13 +1515,14 @@ async def confirm_incident_valid(
     incident_service._add_status_history(
         incident,
         "pending_company_action",
-        "Incident confirmed as valid by admin after KB review",
+        "Incident confirmed as valid by reviewer after KB review",
     )
 
     return {
         "incident_id": incident_id,
         "status": "pending_company_action",
-        "kb_match_type": "admin_confirmed",
+        "kb_match_type": "true",
+        "kb_entry_id": promoted_kb_id,
     }
 
 
