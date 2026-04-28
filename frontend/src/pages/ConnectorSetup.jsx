@@ -108,6 +108,7 @@ export default function ConnectorSetup() {
               setStep(1); // Skip type selection, go to Connection Details
             }
           } catch {
+            return;
           }
         }
       } catch {
@@ -365,7 +366,7 @@ export default function ConnectorSetup() {
                 placeholder={`${tenantId}_webhook_secret`}
               />
               <div style={{ fontSize: '0.72rem', color: '#94a3b8', marginTop: '0.25rem' }}>
-                Must match the secret configured in the external system's webhook sender.
+                Must match the secret configured in the external system&apos;s webhook sender.
               </div>
             </Field>
 

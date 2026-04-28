@@ -19,6 +19,7 @@ class KBService:
     def __init__(self):
         self.true_incidents_kb: List[Dict[str, Any]] = []
         self.false_incidents_kb: List[Dict[str, Any]] = []
+        self.incident_patterns: List[Dict[str, Any]] = []
         self._db = None
         self._initialize_default_kb()
 
@@ -49,11 +50,14 @@ class KBService:
             if true_count > 0 or false_count > 0:
                 true_docs = await db.kb_true_incidents.find({}, {"_id": 0}).to_list(None)
                 false_docs = await db.kb_false_incidents.find({}, {"_id": 0}).to_list(None)
-                self.true_incidents_kb = true_docs
-                self.false_incidents_kb = false_docs
+                pattern_docs = await db.kb_incident_patterns.find({}, {"_id": 0}).to_list(None)
+                self.true_incidents_kb = self._merge_seed_entries(self.true_incidents_kb, true_docs)
+                self.false_incidents_kb = self._merge_seed_entries(self.false_incidents_kb, false_docs)
+                self.incident_patterns = pattern_docs
                 logger.info(
-                    f"Loaded KB from MongoDB: {len(true_docs)} true, {len(false_docs)} false"
+                    f"Loaded KB from MongoDB: {len(true_docs)} true, {len(false_docs)} false, {len(pattern_docs)} patterns"
                 )
+                await self._persist_missing_seed_entries(true_docs, false_docs)
             else:
                 # First run — seed defaults into MongoDB
                 await self._seed_db()
@@ -100,6 +104,55 @@ class KBService:
             await col.delete_one({"kb_id": kb_id})
         except Exception as e:
             logger.error(f"Failed to delete KB entry {kb_id} from MongoDB: {e}")
+
+    async def _persist_incident_pattern(self, pattern: Dict[str, Any]):
+        """Persist a pending incident pattern to MongoDB."""
+        db = self._get_db()
+        if db is None:
+            return
+        try:
+            await db.kb_incident_patterns.replace_one(
+                {"incident_id": pattern.get("incident_id")},
+                pattern,
+                upsert=True,
+            )
+        except Exception as e:
+            logger.error(f"Failed to persist incident pattern {pattern.get('incident_id')}: {e}")
+
+    def _merge_seed_entries(
+        self,
+        seed_entries: List[Dict[str, Any]],
+        db_entries: List[Dict[str, Any]],
+    ) -> List[Dict[str, Any]]:
+        merged = {str(entry.get("kb_id")): entry for entry in db_entries if entry.get("kb_id")}
+        for entry in seed_entries:
+            kb_id = str(entry.get("kb_id", ""))
+            if kb_id and kb_id not in merged:
+                merged[kb_id] = entry
+        return list(merged.values())
+
+    async def _persist_missing_seed_entries(
+        self,
+        existing_true_docs: List[Dict[str, Any]],
+        existing_false_docs: List[Dict[str, Any]],
+    ):
+        db = self._get_db()
+        if db is None:
+            return
+
+        existing_true_ids = {str(entry.get("kb_id")) for entry in existing_true_docs if entry.get("kb_id")}
+        existing_false_ids = {str(entry.get("kb_id")) for entry in existing_false_docs if entry.get("kb_id")}
+
+        missing_true = [entry for entry in self.true_incidents_kb if str(entry.get("kb_id")) not in existing_true_ids]
+        missing_false = [entry for entry in self.false_incidents_kb if str(entry.get("kb_id")) not in existing_false_ids]
+
+        try:
+            if missing_true:
+                await db.kb_true_incidents.insert_many(missing_true)
+            if missing_false:
+                await db.kb_false_incidents.insert_many(missing_false)
+        except Exception as e:
+            logger.error(f"Failed to persist missing KB seed entries: {e}")
 
     def _initialize_default_kb(self):
         """Initialize with default knowledge base entries"""
@@ -1162,9 +1215,16 @@ class KBService:
         ]
 
         # Add CO-specific KB entries from real Cadent CO Data 2024-25
-        from app.services.kb_seeder_co import get_co_true_incidents_kb, get_co_false_incidents_kb
+        from app.services.kb_seeder_co import (
+            get_co_true_incidents_kb,
+            get_co_false_incidents_kb,
+            get_co_workflow_seed_true_kb,
+            get_co_workflow_seed_false_kb,
+        )
         self.true_incidents_kb.extend(get_co_true_incidents_kb())
         self.false_incidents_kb.extend(get_co_false_incidents_kb())
+        self.true_incidents_kb.extend(get_co_workflow_seed_true_kb())
+        self.false_incidents_kb.extend(get_co_workflow_seed_false_kb())
 
         logger.info(f"Initialized KB with {len(self.true_incidents_kb)} true incidents "
                    f"and {len(self.false_incidents_kb)} false incidents")
@@ -1172,7 +1232,8 @@ class KBService:
     def verify_incident(
         self,
         incident_data: Dict[str, Any],
-        use_case: str
+        use_case: str,
+        workflow_outcome: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Verify incident against KB and return similarity scores
@@ -1185,76 +1246,140 @@ class KBService:
             {
                 "true_kb_match": float (0-1),
                 "false_kb_match": float (0-1),
-                "best_match_type": "true" | "false" | "unknown",
+                "best_match_type": "true" | "false",
                 "best_match_id": str,
                 "confidence_adjustment": float (-0.3 to +0.3),
                 "explanation": str,
                 "all_matches": list of all matching entries with scores
             }
         """
-        # Find best matches in both KBs
-        true_match, true_score = self._find_best_match(
-            incident_data, use_case, self.true_incidents_kb, "true"
+        incident_pattern = self.build_incident_pattern(
+            incident_data,
+            use_case=use_case,
+            workflow_outcome=workflow_outcome,
+            incident_id=incident_data.get("incident_id"),
+        )
+        return self.verify_incident_pattern(incident_pattern)
+
+    def verify_incident_pattern(self, incident_pattern: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Verify a prebuilt incident pattern against KB and return similarity scores.
+
+        This is used to keep re-validation consistent with the original workflow
+        snapshot instead of rebuilding a slightly different pattern later.
+        """
+        incident_pattern = dict(incident_pattern or {})
+        incident_pattern.setdefault(
+            "use_case",
+            self._normalize_use_case_key(incident_pattern.get("use_case", "")),
         )
 
-        false_match, false_score = self._find_best_match(
-            incident_data, use_case, self.false_incidents_kb, "false"
+        # Find all strong pattern matches from both sides
+        all_true_matches = self._find_all_pattern_matches(
+            incident_pattern, self.true_incidents_kb, "true", threshold=0.28
+        )
+        all_false_matches = self._find_all_pattern_matches(
+            incident_pattern, self.false_incidents_kb, "false", threshold=0.28
         )
 
-        # Find all matches above threshold (0.4) from both KBs
-        all_true_matches = self._find_all_matches(
-            incident_data, use_case, self.true_incidents_kb, "true", threshold=0.4
-        )
-        all_false_matches = self._find_all_matches(
-            incident_data, use_case, self.false_incidents_kb, "false", threshold=0.4
-        )
+        # Combine the strongest matches on each side into overall similarity
+        # scores. This makes the verdict depend on the full support of the
+        # true/false buckets, not just one single best match.
+        true_score = self._combine_match_scores(all_true_matches)
+        false_score = self._combine_match_scores(all_false_matches)
+        true_match = all_true_matches[0] if all_true_matches else None
+        false_match = all_false_matches[0] if all_false_matches else None
 
         winning_confidence = 0.0
 
-        # Determine best match type
+        # Determine best match type.
+        # We always produce a binary verdict using the stronger side. If the
+        # best scores tie, use broader support first and specificity second.
         matched_entry = None
-        if true_score > false_score and true_score > 0.6:
+        true_support = self._support_score(all_true_matches)
+        false_support = self._support_score(all_false_matches)
+        true_specificity = len((true_match or {}).get("matched_tags", [])) + len(((true_match or {}).get("pattern_fields")) or {})
+        false_specificity = len((false_match or {}).get("matched_tags", [])) + len(((false_match or {}).get("pattern_fields")) or {})
+
+        if true_score > false_score:
+            choose_true = True
+        elif false_score > true_score:
+            choose_true = False
+        elif true_support > false_support:
+            choose_true = True
+        elif false_support > true_support:
+            choose_true = False
+        elif true_specificity > false_specificity:
+            choose_true = True
+        else:
+            # Exact or unresolved tie: default to false so ambiguous cases do not
+            # drift into a true incident classification.
+            choose_true = False
+
+        if choose_true:
             match_type = "true"
             best_match_id = true_match["kb_id"] if true_match else None
             winning_confidence = true_score
-            confidence_adj = min(0.3, (true_score - 0.5) * 0.6)  # +0 to +0.3
-            explanation = f"Similar to verified true incident (confidence: {true_score:.2f})"
+            confidence_adj = min(0.3, max(0.0, (true_score - 0.5) * 0.6))  # +0 to +0.3
+            if true_score == false_score and true_support != false_support:
+                explanation = (
+                    f"Overall true and false similarity tied at {true_score:.2f}; "
+                    f"classified as true because true-side support ({true_support:.2f}) "
+                    f"exceeded false support ({false_support:.2f})"
+                )
+            elif true_score == false_score:
+                explanation = (
+                    f"Overall true and false similarity tied at {true_score:.2f}; "
+                    f"classified as true because the top true-side pattern was at least as specific as the false side"
+                )
+            else:
+                explanation = (
+                    f"Classified as true incident because combined true similarity "
+                    f"({true_score:.2f}) exceeded combined false similarity ({false_score:.2f})"
+                )
             # Include matched entry details
             if true_match:
                 matched_entry = {
-                    "incident_type": true_match.get("use_case", ""),
+                    "incident_type": true_match.get("incident_type", ""),
                     "description": true_match.get("description", ""),
                     "outcome": true_match.get("outcome", ""),
                     "resolution_summary": true_match.get("resolution_summary", ""),
-                    "root_cause": true_match.get("root_cause", ""),
-                    "actions_taken": true_match.get("actions_taken", ""),
-                    "tags": true_match.get("tags", []),
-                    "reason": true_match.get("root_cause", "")
+                    "tags": true_match.get("matched_tags", []),
+                    "reason": true_match.get("reason", ""),
+                    "score": true_match.get("score", 0),
                 }
-        elif false_score > true_score and false_score > 0.6:
+        else:
             match_type = "false"
             best_match_id = false_match["kb_id"] if false_match else None
             winning_confidence = false_score
-            confidence_adj = -min(0.3, (false_score - 0.5) * 0.6)  # -0.3 to -0
-            explanation = f"Similar to known false positive (confidence: {false_score:.2f})"
+            confidence_adj = -min(0.3, max(0.0, (false_score - 0.5) * 0.6))  # -0.3 to -0
+            if true_score == false_score and false_support == true_support and false_specificity >= true_specificity:
+                explanation = (
+                    f"Overall true and false similarity tied at {false_score:.2f}; "
+                    f"classified as false because support and specificity did not clearly exceed the false side"
+                )
+            elif true_score == false_score:
+                explanation = (
+                    f"Overall true and false similarity tied at {false_score:.2f}; "
+                    f"classified as false because false-side support ({false_support:.2f}) "
+                    f"exceeded true support ({true_support:.2f})"
+                )
+            else:
+                explanation = (
+                    f"Classified as false incident because combined false similarity "
+                    f"({false_score:.2f}) exceeded combined true similarity ({true_score:.2f})"
+                )
             # Include matched entry details for false incidents
             if false_match:
                 matched_entry = {
-                    "incident_type": false_match.get("reported_as", ""),
-                    "description": false_match.get("actual_issue", ""),
-                    "outcome": "false_positive",
-                    "resolution_summary": false_match.get("resolution", ""),
-                    "actual_issue": false_match.get("actual_issue", ""),
-                    "false_positive_reason": false_match.get("false_positive_reason", ""),
-                    "tags": false_match.get("tags", []),
-                    "reason": false_match.get("false_positive_reason", "")
+                    "incident_type": false_match.get("incident_type", ""),
+                    "description": false_match.get("description", ""),
+                    "outcome": false_match.get("outcome", "false_positive"),
+                    "resolution_summary": false_match.get("resolution_summary", ""),
+                    "tags": false_match.get("matched_tags", []),
+                    "reason": false_match.get("reason", ""),
+                    "score": false_match.get("score", 0),
                 }
-        else:
-            match_type = "unknown"
-            best_match_id = None
-            confidence_adj = 0.0
-            explanation = "No strong KB match found, using model predictions only"
-
         result = {
             "true_kb_match": true_score,
             "false_kb_match": false_score,
@@ -1271,8 +1396,283 @@ class KBService:
         # Add matched entry details if available
         if matched_entry:
             result["matched_entry"] = matched_entry
+        result["incident_pattern"] = incident_pattern
+        result["top_true_matches"] = all_true_matches[:3]
+        result["top_false_matches"] = all_false_matches[:3]
         
         return result
+
+    def _combine_match_scores(
+        self,
+        matches: List[Dict[str, Any]],
+        top_n: int = 5,
+    ) -> float:
+        if not matches:
+            return 0.0
+
+        top_matches = matches[:top_n]
+        weights = [1.0, 0.75, 0.55, 0.4, 0.3]
+        weighted_total = 0.0
+        weight_sum = 0.0
+
+        for index, match in enumerate(top_matches):
+            weight = weights[index] if index < len(weights) else max(0.15, weights[-1] - (index - len(weights) + 1) * 0.05)
+            weighted_total += float(match.get("score", 0.0)) * weight
+            weight_sum += weight
+
+        return round((weighted_total / weight_sum) if weight_sum else 0.0, 3)
+
+    def _find_best_pattern_match(
+        self,
+        incident_pattern: Dict[str, Any],
+        kb_list: List[Dict[str, Any]],
+        kb_type: str,
+    ) -> Tuple[Optional[Dict[str, Any]], float]:
+        best_match = None
+        best_score = 0.0
+
+        for kb_entry in kb_list:
+            kb_pattern = self._build_kb_pattern(kb_entry, kb_type)
+            if not self._pattern_use_case_compatible(incident_pattern, kb_pattern):
+                continue
+            score = self._calculate_pattern_similarity(incident_pattern, kb_entry, kb_type)
+            if score > best_score:
+                best_score = score
+                best_match = kb_entry
+
+        return best_match, best_score
+
+    def _find_all_pattern_matches(
+        self,
+        incident_pattern: Dict[str, Any],
+        kb_list: List[Dict[str, Any]],
+        kb_type: str,
+        threshold: float = 0.28,
+    ) -> List[Dict[str, Any]]:
+        matches = []
+        current_incident_id = str(incident_pattern.get("incident_id") or "").strip()
+
+        for kb_entry in kb_list:
+            kb_incident_id = str(kb_entry.get("incident_id") or "").strip()
+            if current_incident_id and kb_incident_id and kb_incident_id == current_incident_id:
+                continue
+            kb_pattern = self._build_kb_pattern(kb_entry, kb_type)
+            if not self._pattern_use_case_compatible(incident_pattern, kb_pattern):
+                continue
+            score = self._calculate_pattern_similarity(incident_pattern, kb_entry, kb_type)
+            if score < threshold:
+                continue
+
+            match_data = {
+                "kb_id": kb_entry.get("kb_id"),
+                "kb_type": kb_type,
+                "score": round(score, 3),
+                "incident_type": kb_entry.get("use_case") if kb_type == "true" else kb_entry.get("reported_as"),
+                "description": kb_entry.get("description") if kb_type == "true" else kb_entry.get("actual_issue"),
+                "outcome": kb_entry.get("outcome", "false_positive" if kb_type == "false" else ""),
+                "resolution_summary": kb_entry.get("resolution_summary") or kb_entry.get("resolution", ""),
+                "reason": kb_entry.get("root_cause") if kb_type == "true" else kb_entry.get("false_positive_reason", ""),
+                "manufacturer": kb_pattern.get("manufacturer"),
+                "model": kb_pattern.get("model"),
+                "matched_tags": sorted(set(incident_pattern.get("derived_tags", [])) & set(kb_pattern.get("derived_tags", []))),
+                "pattern_fields": kb_pattern.get("pattern_fields", {}),
+            }
+            matches.append(match_data)
+
+        matches.sort(key=lambda x: x["score"], reverse=True)
+        return matches
+
+    def _pattern_use_case_compatible(
+        self,
+        incident_pattern: Dict[str, Any],
+        kb_pattern: Dict[str, Any],
+    ) -> bool:
+        incident_use_case = self._normalize_use_case_key(incident_pattern.get("use_case", ""))
+        kb_use_case = self._normalize_use_case_key(kb_pattern.get("use_case", ""))
+        if not incident_use_case or not kb_use_case:
+            return True
+        if incident_use_case == kb_use_case:
+            return True
+        return incident_use_case in kb_use_case or kb_use_case in incident_use_case
+
+    def _calculate_pattern_similarity(
+        self,
+        incident_pattern: Dict[str, Any],
+        kb_entry: Dict[str, Any],
+        kb_type: str,
+    ) -> float:
+        kb_pattern = self._build_kb_pattern(kb_entry, kb_type)
+        if not kb_pattern:
+            return 0.0
+
+        score = 0.0
+        max_score = 0.0
+
+        def norm(value: Any) -> str:
+            return str(value or "").strip().lower()
+
+        # Use case alignment
+        max_score += 1.5
+        incident_use_case = norm(incident_pattern.get("use_case"))
+        kb_use_case = norm(kb_pattern.get("use_case"))
+        if incident_use_case and kb_use_case:
+            if incident_use_case == kb_use_case:
+                score += 1.5
+            elif incident_use_case in kb_use_case or kb_use_case in incident_use_case:
+                score += 1.0
+
+        # Manufacturer / model are high-signal when present
+        for field, weight in (("manufacturer", 1.8), ("model", 2.2)):
+            max_score += weight
+            incident_value = norm(incident_pattern.get(field))
+            kb_value = norm(kb_pattern.get(field))
+            if not incident_value or not kb_value:
+                continue
+            if incident_value == kb_value:
+                score += weight
+            elif incident_value in kb_value or kb_value in incident_value:
+                score += weight * 0.65
+
+        # Pattern fields
+        incident_fields = incident_pattern.get("pattern_fields", {}) or {}
+        kb_fields = kb_pattern.get("pattern_fields", {}) or {}
+        field_weights = {
+            "light_pattern": 1.4,
+            "sound_pattern": 1.8,
+            "state_now": 1.2,
+            "repeat_pattern": 1.5,
+            "likely_meaning": 1.8,
+            "symptom_level": 1.0,
+            "safety_state": 0.9,
+            "alarm_type": 0.8,
+        }
+        for field, weight in field_weights.items():
+            max_score += weight
+            incident_value = norm(incident_fields.get(field))
+            kb_value = norm(kb_fields.get(field))
+            if not incident_value or not kb_value:
+                continue
+            if incident_value == kb_value:
+                score += weight
+            elif incident_value in kb_value or kb_value in incident_value:
+                score += weight * 0.6
+
+        # Tag overlap
+        incident_tags = set(incident_pattern.get("derived_tags", []) or [])
+        kb_tags = set(kb_pattern.get("derived_tags", []) or [])
+        max_score += 2.2
+        if incident_tags and kb_tags:
+            overlap = len(incident_tags & kb_tags)
+            union = len(incident_tags | kb_tags)
+            if union:
+                score += 2.2 * (overlap / union)
+
+        # Workflow outcome is informative but not truth
+        max_score += 0.6
+        incident_outcome = norm(incident_pattern.get("workflow_outcome"))
+        kb_outcome = norm(kb_pattern.get("workflow_outcome"))
+        if incident_outcome and kb_outcome and incident_outcome == kb_outcome:
+            score += 0.6
+
+        return max(0.0, min(1.0, score / max_score if max_score else 0.0))
+
+    def _build_kb_pattern(self, kb_entry: Dict[str, Any], kb_type: str) -> Dict[str, Any]:
+        if kb_entry.get("incident_pattern"):
+            pattern = dict(kb_entry.get("incident_pattern") or {})
+            pattern.setdefault("use_case", self._normalize_use_case_key(pattern.get("use_case", "")))
+            return pattern
+
+        use_case = kb_entry.get("use_case") if kb_type == "true" else kb_entry.get("reported_as")
+        manufacturer = kb_entry.get("manufacturer")
+        model = kb_entry.get("model")
+        pattern_fields: Dict[str, Any] = {}
+        derived_tags = set()
+
+        indicators = self._canonicalize_indicator_map(kb_entry.get("key_indicators", {}))
+        tags = [str(tag).strip().lower() for tag in kb_entry.get("tags", []) if tag]
+        blob = " ".join(
+            str(part).lower()
+            for part in (
+                kb_entry.get("description"),
+                kb_entry.get("actual_issue"),
+                kb_entry.get("false_positive_reason"),
+                kb_entry.get("resolution_summary"),
+                kb_entry.get("resolution"),
+                kb_entry.get("root_cause"),
+            )
+            if part
+        )
+
+        if indicators.get("red_light_flashing"):
+            pattern_fields["light_pattern"] = "Red"
+            derived_tags.add("red_light")
+        if indicators.get("intermittent_chirp"):
+            pattern_fields["sound_pattern"] = "Single chirp"
+            derived_tags.add("chirping")
+        if indicators.get("four_beep_pattern") or indicators.get("continuous_beeping"):
+            pattern_fields["sound_pattern"] = "4 quick beeps"
+            derived_tags.add("repeating_four_beep_pattern")
+        if indicators.get("battery_low"):
+            pattern_fields["likely_meaning"] = "Low battery"
+            derived_tags.add("battery_issue")
+        if indicators.get("alarm_out_of_date"):
+            pattern_fields["likely_meaning"] = "End of life"
+            derived_tags.add("end_of_life")
+        if indicators.get("faulty_alarm"):
+            pattern_fields["likely_meaning"] = "Fault"
+            derived_tags.add("fault")
+        if indicators.get("symptoms_present"):
+            pattern_fields["symptom_level"] = "Yes - one person feels unwell"
+            derived_tags.add("symptoms_present")
+        if indicators.get("multiple_symptoms"):
+            pattern_fields["symptom_level"] = "Yes - multiple people feel unwell"
+            derived_tags.add("multiple_people_unwell")
+        if indicators.get("is_safe_evacuated"):
+            pattern_fields["safety_state"] = "Yes, we are outside/in fresh air"
+            derived_tags.add("evacuated")
+        if indicators.get("not_evacuated"):
+            pattern_fields["safety_state"] = "No, still inside the property"
+            derived_tags.add("not_evacuated")
+        if indicators.get("co_alarm_type"):
+            pattern_fields["alarm_type"] = "CO (Carbon Monoxide) alarm"
+        if indicators.get("smoke_alarm_type"):
+            pattern_fields["alarm_type"] = "Smoke alarm"
+            derived_tags.add("smoke_alarm")
+        if indicators.get("no_co_readings") or indicators.get("all_checks_clear") or indicators.get("no_gas_fault"):
+            derived_tags.add("normal_pattern")
+        if indicators.get("co_readings_detected"):
+            derived_tags.add("possible_co_alarm")
+            pattern_fields.setdefault("likely_meaning", "Possible CO alarm")
+
+        if "charcoal" in blob:
+            derived_tags.add("charcoal_trigger")
+        if "paint" in blob or "voc" in blob:
+            derived_tags.add("paint_voc_trigger")
+        if "steam" in blob or "humidity" in blob:
+            derived_tags.add("steam_humidity_trigger")
+        if "electrical" in blob or "hard wired" in blob or "hard-wired" in blob:
+            derived_tags.add("electrical_issue")
+        if "smoke alarm" in blob:
+            derived_tags.add("smoke_alarm")
+        if "faulty" in blob and "alarm" in blob:
+            derived_tags.add("fault")
+        if "battery" in blob:
+            derived_tags.add("battery_issue")
+        if "expired" in blob or "out of date" in blob or "end of life" in blob:
+            derived_tags.add("end_of_life")
+
+        workflow_outcome = kb_entry.get("outcome")
+        if not workflow_outcome and kb_type == "false":
+            workflow_outcome = "close_with_guidance"
+
+        return {
+            "use_case": self._normalize_use_case_key(use_case or ""),
+            "manufacturer": manufacturer,
+            "model": model,
+            "workflow_outcome": workflow_outcome,
+            "pattern_fields": pattern_fields,
+            "derived_tags": sorted(derived_tags | set(tags)),
+        }
 
     def _find_best_match(
         self,
@@ -1374,25 +1774,112 @@ class KBService:
     # KB key_indicators (e.g. "intermittent_chirp": True).
     _WORKFLOW_TO_KB_MAP = {
         # CO alarm workflow fields → KB indicator keys
-        "intermittent_chirp": lambda d: "chirp" in (d.get("alarm_sound_pattern") or "").lower() or "every 30" in (d.get("alarm_sound_pattern") or "").lower(),
+        "intermittent_chirp": lambda d: any(
+            token in (d.get("alarm_sound_pattern") or "").lower()
+            for token in ("chirp", "every 30", "every 48", "every minute", "every 60", "single beep")
+        ) or any(
+            token in d.get("_text_blob", "")
+            for token in ("low battery", "single beep every", "chirp every", "intermittent beep", "intermittent beeping")
+        ),
         "every_30_60_seconds": lambda d: "30-60" in (d.get("alarm_sound_pattern") or "") or "every 30" in (d.get("alarm_sound_pattern") or "").lower(),
         "continuous_beeping": lambda d: "continuous" in (d.get("alarm_sound_pattern") or "").lower() or "non-stop" in (d.get("alarm_sound_pattern") or "").lower(),
-        "four_beep_pattern": lambda d: "4 loud beeps" in (d.get("alarm_sound_pattern") or "").lower() or "4 beeps" in (d.get("alarm_sound_pattern") or "").lower(),
+        "four_beep_pattern": lambda d: "4 loud beeps" in (d.get("alarm_sound_pattern") or "").lower() or "4 beeps" in (d.get("alarm_sound_pattern") or "").lower() or "4 quick beeps" in (d.get("_text_blob", "")),
         "alarm_stopped": lambda d: "stopped" in (d.get("alarm_sound_pattern") or "").lower(),
         "no_symptoms": lambda d: "no symptom" in (d.get("co_symptoms") or "").lower(),
         "symptoms_present": lambda d: "feel unwell" in (d.get("co_symptoms") or "").lower() or "headache" in (d.get("co_symptoms") or "").lower(),
         "multiple_symptoms": lambda d: "multiple" in (d.get("co_symptoms") or "").lower(),
-        "battery_low": lambda d: "chirp" in (d.get("alarm_sound_pattern") or "").lower() and "no symptom" in (d.get("co_symptoms") or "").lower(),
-        "alarm_over_7_years": lambda d: "over 7" in (d.get("alarm_age") or "").lower() or "expired" in (d.get("alarm_age") or "").lower(),
-        "alarm_out_of_date": lambda d: "over 7" in (d.get("alarm_age") or "").lower() or "expired" in (d.get("alarm_age") or "").lower(),
+        "battery_low": lambda d: (
+            "chirp" in (d.get("alarm_sound_pattern") or "").lower()
+            and "no symptom" in (d.get("co_symptoms") or "").lower()
+        ) or any(
+            token in d.get("_text_blob", "")
+            for token in ("battery", "low battery", "replace batteries", "battery / power issue")
+        ),
+        "alarm_over_7_years": lambda d: "over 7" in (d.get("alarm_age") or "").lower() or "expired" in (d.get("alarm_age") or "").lower() or "end of life" in d.get("_text_blob", ""),
+        "alarm_out_of_date": lambda d: "over 7" in (d.get("alarm_age") or "").lower() or "expired" in (d.get("alarm_age") or "").lower() or "out of date" in d.get("_text_blob", "") or "end of life" in d.get("_text_blob", ""),
         "alarm_5_to_7_years": lambda d: "5-7" in (d.get("alarm_age") or ""),
-        "no_co_readings": lambda d: "no symptom" in (d.get("co_symptoms") or "").lower() and ("stopped" in (d.get("alarm_sound_pattern") or "").lower() or "chirp" in (d.get("alarm_sound_pattern") or "").lower()),
+        "no_co_readings": lambda d: (
+            "no symptom" in (d.get("co_symptoms") or "").lower()
+            and ("stopped" in (d.get("alarm_sound_pattern") or "").lower() or "chirp" in (d.get("alarm_sound_pattern") or "").lower())
+        ) or any(
+            token in d.get("_text_blob", "")
+            for token in ("no co readings", "no readings", "no co found", "no trace", "all checks clear")
+        ),
+        "co_readings_detected": lambda d: any(
+            token in d.get("_text_blob", "")
+            for token in ("co detected", "co reading", "ppm", "dangerous co", "rising co")
+        ) and not any(
+            token in d.get("_text_blob", "")
+            for token in ("no co", "no readings", "no trace", "no co found")
+        ),
         "is_safe_evacuated": lambda d: "outside" in (d.get("is_safe") or "").lower() or "fresh air" in (d.get("is_safe") or "").lower(),
         "not_evacuated": lambda d: "still inside" in (d.get("is_safe") or "").lower() or "still inside" in (d.get("is_evacuated") or "").lower(),
         "red_light_flashing": lambda d: "red" in (d.get("alarm_light_colour") or "").lower(),
         "no_light": lambda d: "no light" in (d.get("alarm_light_colour") or "").lower(),
         "co_alarm_type": lambda d: str(d.get("alarm_type", "")).lower().startswith("co"),
         "smoke_alarm_type": lambda d: "smoke" in str(d.get("alarm_type") or "").lower(),
+        "faulty_alarm": lambda d: any(
+            token in d.get("_text_blob", "")
+            for token in ("faulty alarm", "sensor fault", "device issue", "product issue", "alarm fault", "defective alarm")
+        ),
+        "tightness_test_passed": lambda d: any(
+            token in d.get("_text_blob", "")
+            for token in ("tightness test passed", "tt pass", "tt passed")
+        ),
+        "tt_passed": lambda d: any(
+            token in d.get("_text_blob", "")
+            for token in ("tightness test passed", "tt pass", "tt passed")
+        ),
+        "all_checks_clear": lambda d: any(
+            token in d.get("_text_blob", "")
+            for token in ("all checks clear", "appliances checked clear", "all clear")
+        ),
+        "no_gas_fault": lambda d: any(
+            token in d.get("_text_blob", "")
+            for token in ("no gas fault", "appliances checked clear", "no fault found", "no signs evident", "all checks clear")
+        ),
+        "portable_alarm_not_activated": lambda d: any(
+            token in d.get("_text_blob", "")
+            for token in ("portable alarm not activated", "portable co alarm did not", "second alarm not activated", "other alarm not active", "newer alarm not active")
+        ),
+        "other_alarm_not_active": lambda d: any(
+            token in d.get("_text_blob", "")
+            for token in ("portable alarm not activated", "second alarm not activated", "other alarm not active", "newer alarm not active")
+        ),
+        "hard_wired_alarm": lambda d: "hard wired" in d.get("_text_blob", "") or "hard-wired" in d.get("_text_blob", ""),
+        "all_alarms_activated": lambda d: any(
+            token in d.get("_text_blob", "")
+            for token in ("all alarms activated", "all went off", "same circuit")
+        ),
+        "electrical_fault_suspected": lambda d: any(
+            token in d.get("_text_blob", "")
+            for token in ("electrical fault", "shared fuse", "electrics checked")
+        ),
+        "paint_smell_present": lambda d: any(
+            token in d.get("_text_blob", "")
+            for token in ("paint smell", "paint fumes", "varnish", "voc", "cleaning chemical")
+        ),
+        "recent_decorating": lambda d: any(
+            token in d.get("_text_blob", "")
+            for token in ("decorating", "painted", "fresh paint", "varnish")
+        ),
+        "alarm_triggered_by_voc": lambda d: any(
+            token in d.get("_text_blob", "")
+            for token in ("voc", "paint fumes", "cleaning chemical")
+        ),
+        "charcoal_burning": lambda d: "charcoal" in d.get("_text_blob", ""),
+        "near_co_alarm": lambda d: "near co alarm" in d.get("_text_blob", "") or "near alarm" in d.get("_text_blob", ""),
+        "appliances_checked_clear": lambda d: any(
+            token in d.get("_text_blob", "")
+            for token in ("appliances checked clear", "all checks clear")
+        ),
+        "high_humidity": lambda d: "humidity" in d.get("_text_blob", ""),
+        "steam_present": lambda d: "steam" in d.get("_text_blob", ""),
+        "alarm_near_bathroom": lambda d: "bathroom" in d.get("_text_blob", ""),
+        "alarm_fell": lambda d: any(token in d.get("_text_blob", "") for token in ("fell from ceiling", "alarm fell", "dropped alarm")),
+        "impact_triggered": lambda d: any(token in d.get("_text_blob", "") for token in ("impact", "fell from ceiling", "dropped")),
+        "heat_alarm_activated": lambda d: "heat alarm" in d.get("_text_blob", "") or "heat element" in d.get("_text_blob", ""),
+        "combined_heat_co": lambda d: "combined heat" in d.get("_text_blob", "") or "heat/co" in d.get("_text_blob", ""),
         # Gas smell workflow fields
         "strong_mercaptan_odour": lambda d: "strong" in (d.get("smell_intensity") or "").lower() or "overwhelming" in (d.get("smell_intensity") or "").lower(),
         "health_symptoms_headache": lambda d: "headache" in (d.get("symptoms") or "").lower() or "feel unwell" in (d.get("symptoms") or "").lower(),
@@ -1412,10 +1899,86 @@ class KBService:
         "gas_escape": "gas_smell",
     }
 
+    _INDICATOR_ALIASES = {
+        "intermittent_beep": "intermittent_chirp",
+        "intermittent_beeping": "intermittent_chirp",
+        "tt_passed": "tightness_test_passed",
+        "second_alarm_not_activated": "other_alarm_not_active",
+        "portable_alarm_not_activated": "other_alarm_not_active",
+        "newer_alarm_not_active": "other_alarm_not_active",
+        "appliances_checked_clear": "all_checks_clear",
+        "alarm_5_years_expired": "alarm_out_of_date",
+        "alarm_over_7_years": "alarm_out_of_date",
+    }
+
+    _INDICATOR_WEIGHTS = {
+        "co_readings_detected": 1.7,
+        "no_co_readings": 1.7,
+        "no_gas_fault": 1.6,
+        "four_beep_pattern": 1.5,
+        "continuous_beeping": 1.4,
+        "strong_mercaptan_odour": 1.5,
+        "hissing_sound": 1.5,
+        "flue_blocked": 1.4,
+        "soot_visible": 1.4,
+        "red_light_flashing": 1.3,
+        "co_alarm_type": 0.8,
+        "symptoms_present": 1.1,
+        "multiple_symptoms": 1.2,
+        "not_evacuated": 1.1,
+        "is_safe_evacuated": 1.0,
+        "intermittent_chirp": 1.2,
+        "battery_low": 1.3,
+        "alarm_out_of_date": 1.2,
+        "alarm_over_7_years": 1.2,
+        "smoke_alarm_type": 1.2,
+    }
+
     def _normalize_use_case_key(self, use_case: str) -> str:
         raw = (use_case or "").lower().strip()
         aliased = self._USE_CASE_ALIASES.get(raw, raw)
         return aliased.replace("_", " ").strip()
+
+    def _indicator_weight(self, indicator_name: str) -> float:
+        """Return the weight for a KB indicator."""
+        return float(self._INDICATOR_WEIGHTS.get(self._canonicalize_indicator_name(indicator_name), 1.0))
+
+    def _canonicalize_indicator_name(self, indicator_name: str) -> str:
+        return self._INDICATOR_ALIASES.get(indicator_name, indicator_name)
+
+    def _canonicalize_indicator_map(self, indicators: Dict[str, Any]) -> Dict[str, Any]:
+        canonical: Dict[str, Any] = {}
+        for key, value in (indicators or {}).items():
+            canonical_key = self._canonicalize_indicator_name(key)
+            if canonical_key not in canonical:
+                canonical[canonical_key] = value
+                continue
+
+            existing = canonical[canonical_key]
+            if isinstance(existing, bool) and isinstance(value, bool):
+                canonical[canonical_key] = existing or value
+            elif existing in (None, "", False) and value not in (None, "", False):
+                canonical[canonical_key] = value
+        return canonical
+
+    def _specificity_factor(self, kb_indicators: Dict[str, Any]) -> float:
+        """Penalize sparse KB entries so generic 2-indicator entries don't max out."""
+        kb_indicators = self._canonicalize_indicator_map(kb_indicators)
+        if not kb_indicators:
+            return 1.0
+
+        total_weight = sum(self._indicator_weight(key) for key in kb_indicators)
+        indicator_count = len(kb_indicators)
+        count_factor = min(1.0, indicator_count / 4.0)
+        weight_factor = min(1.0, total_weight / 4.5)
+        return 0.55 + (0.45 * max(count_factor, weight_factor))
+
+    def _support_score(self, matches: List[Dict[str, Any]], top_n: int = 3) -> float:
+        """Average score of the strongest matches, used as a binary tie-breaker."""
+        if not matches:
+            return 0.0
+        top_matches = matches[:top_n]
+        return sum(match.get("score", 0.0) for match in top_matches) / len(top_matches)
 
     def _normalize_incident_data(self, incident_data: Dict[str, Any]) -> Dict[str, Any]:
         normalized = dict(incident_data or {})
@@ -1444,6 +2007,10 @@ class KBService:
                 if value:
                     normalized["alarm_light_colour"] = value
                     break
+        if not normalized.get("alarm_light_colour"):
+            value = self._find_dynamic_answer_value(normalized, suffixes=("light", "led"))
+            if value:
+                normalized["alarm_light_colour"] = value
 
         if not normalized.get("alarm_sound_pattern"):
             if normalized.get("fa_red_sound"):
@@ -1464,6 +2031,13 @@ class KBService:
                 normalized["alarm_sound_pattern"] = "chirp every minute"
             elif normalized.get("xs_led") == "Red (steady, not flashing)":
                 normalized["alarm_sound_pattern"] = "alarm silenced / stopped"
+        if not normalized.get("alarm_sound_pattern"):
+            value = self._find_dynamic_answer_value(
+                normalized,
+                suffixes=("sound", "voice", "alert", "beeps"),
+            )
+            if value:
+                normalized["alarm_sound_pattern"] = value
 
         if not normalized.get("co_alarm"):
             co_alarm_status = str(normalized.get("co_alarm_status", "")).lower()
@@ -1473,7 +2047,372 @@ class KBService:
         if not normalized.get("hissing_sound") and normalized.get("has_hissing"):
             normalized["hissing_sound"] = normalized.get("has_hissing")
 
+        text_parts = [
+            normalized.get("description"),
+            normalized.get("incident_type"),
+            normalized.get("location"),
+            normalized.get("alarm_type"),
+            normalized.get("alarm_sound_pattern"),
+            normalized.get("alarm_light_colour"),
+            normalized.get("co_symptoms"),
+            normalized.get("is_safe"),
+            normalized.get("co_alarm_status"),
+            normalized.get("manufacturer"),
+            normalized.get("model_number"),
+            normalized.get("manufacturer_triage_message"),
+            normalized.get("manufacturer_triage_outcome"),
+            normalized.get("last_subworkflow_message"),
+            normalized.get("last_subworkflow_outcome"),
+            normalized.get("resolution_summary"),
+            normalized.get("notes"),
+        ]
+        normalized["_text_blob"] = " | ".join(
+            str(part).lower() for part in text_parts if part not in (None, "")
+        )
+
         return normalized
+
+    def _find_dynamic_answer_value(
+        self,
+        incident_data: Dict[str, Any],
+        suffixes: Tuple[str, ...],
+    ) -> Optional[str]:
+        candidates: List[Tuple[str, str]] = []
+        blocked_suffixes = (
+            "_score",
+            "_normalized_score",
+            "_calculate_score",
+            "_risk_switch",
+            "_model",
+            "_switch",
+        )
+
+        for key, value in incident_data.items():
+            if value in (None, "", [], {}):
+                continue
+            if not isinstance(value, str):
+                continue
+            if any(key.endswith(blocked) for blocked in blocked_suffixes):
+                continue
+            lowered = key.lower()
+            if not any(lowered.endswith(f"_{suffix}") or lowered == suffix for suffix in suffixes):
+                continue
+            candidates.append((key, value))
+
+        if not candidates:
+            return None
+
+        preferred_prefixes = (
+            "kidde",
+            "fa",
+            "fh",
+            "xc",
+            "xs",
+            "hw",
+            "nest",
+            "net",
+            "cav",
+            "other",
+            "aico",
+            "gen",
+        )
+        candidates.sort(
+            key=lambda item: (
+                0 if any(item[0].lower().startswith(prefix) for prefix in preferred_prefixes) else 1,
+                len(item[0]),
+            )
+        )
+        return candidates[0][1]
+
+    def build_incident_pattern(
+        self,
+        incident_data: Dict[str, Any],
+        use_case: str,
+        workflow_outcome: Optional[str] = None,
+        incident_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """
+        Build a normalized workflow-answer pattern for the incident.
+
+        This is stored separately from verified true/false KB so new incidents
+        can be matched and reviewed later without polluting the curated KB.
+        """
+        normalized = self._normalize_incident_data(incident_data)
+        manufacturer, model = self._extract_manufacturer_model(normalized)
+
+        pattern = {
+            "incident_id": incident_id,
+            "use_case": self._normalize_use_case_key(use_case),
+            "manufacturer": manufacturer,
+            "model": model,
+            "workflow_outcome": workflow_outcome,
+            "pattern_fields": self._extract_pattern_fields(normalized),
+            "derived_tags": sorted(self._derive_incident_tags(normalized)),
+            "created_at": datetime.utcnow().isoformat(),
+            "verification_status": "pending",
+        }
+
+        return pattern
+
+    def add_incident_pattern(self, pattern: Dict[str, Any]) -> Optional[str]:
+        """Store a newly created incident pattern separately from verified KB."""
+        if not pattern or not pattern.get("incident_id"):
+            return None
+
+        incident_id = str(pattern["incident_id"])
+        existing_idx = next(
+            (idx for idx, entry in enumerate(self.incident_patterns) if str(entry.get("incident_id")) == incident_id),
+            None,
+        )
+        if existing_idx is not None:
+            self.incident_patterns[existing_idx] = pattern
+        else:
+            self.incident_patterns.append(pattern)
+
+        logger.info("Stored incident pattern: %s", incident_id)
+
+        try:
+            import asyncio
+            loop = asyncio.get_event_loop()
+            loop.create_task(self._persist_incident_pattern(pattern))
+        except RuntimeError:
+            pass
+
+        return incident_id
+
+    def promote_incident_to_verified_kb(
+        self,
+        incident: Any,
+        target_type: str,
+        reviewed_by: str = "system",
+        review_notes: Optional[str] = None,
+    ) -> Optional[str]:
+        """
+        Add or move an incident into the verified true/false KB bucket.
+
+        If the incident already exists in the opposite bucket, it is removed and
+        recreated in the requested target bucket.
+        """
+        if target_type not in ("true", "false") or not incident:
+            return None
+
+        use_case_label = incident.incident_type or getattr(incident, "classified_use_case", None) or "Unknown"
+        incident_pattern = incident.incident_pattern or self.build_incident_pattern(
+            incident.structured_data or {},
+            use_case=use_case_label,
+            workflow_outcome=getattr(incident.outcome, "value", incident.outcome),
+            incident_id=incident.incident_id,
+        )
+
+        # Remove from the opposite side if present
+        opposite_type = "false" if target_type == "true" else "true"
+        opposite_entry = self._find_verified_entry_by_incident_id(incident.incident_id, opposite_type)
+        if opposite_entry:
+            self.delete_kb_entry(opposite_entry.get("kb_id"), opposite_type)
+
+        existing_entry = self._find_verified_entry_by_incident_id(incident.incident_id, target_type)
+        entry = self._build_verified_kb_entry(
+            incident=incident,
+            incident_pattern=incident_pattern,
+            kb_type=target_type,
+            reviewed_by=reviewed_by,
+            review_notes=review_notes,
+            existing_kb_id=existing_entry.get("kb_id") if existing_entry else None,
+        )
+
+        if existing_entry:
+            self.update_kb_entry(existing_entry["kb_id"], target_type, entry)
+            return existing_entry["kb_id"]
+
+        if target_type == "true":
+            return self.add_true_incident(entry)
+        return self.add_false_incident(entry)
+
+    def _find_verified_entry_by_incident_id(self, incident_id: str, kb_type: str) -> Optional[Dict[str, Any]]:
+        kb_list = self.true_incidents_kb if kb_type == "true" else self.false_incidents_kb
+        for entry in kb_list:
+            if str(entry.get("incident_id")) == str(incident_id):
+                return entry
+        return None
+
+    def _build_verified_kb_entry(
+        self,
+        incident: Any,
+        incident_pattern: Dict[str, Any],
+        kb_type: str,
+        reviewed_by: str,
+        review_notes: Optional[str],
+        existing_kb_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        now = datetime.utcnow().isoformat()
+        use_case_label = incident.incident_type or getattr(incident, "classified_use_case", None) or "Unknown"
+        description = getattr(incident, "description", "") or ""
+        pattern_fields = incident_pattern.get("pattern_fields", {}) or {}
+        likely_meaning = pattern_fields.get("likely_meaning") or "Pattern-derived incident classification"
+        resolution_summary = review_notes or getattr(incident, "resolution_notes", "") or ""
+        workflow_outcome = getattr(incident.outcome, "value", incident.outcome)
+        base = {
+            "kb_id": existing_kb_id,
+            "tenant_id": getattr(incident, "tenant_id", None),
+            "incident_id": incident.incident_id,
+            "source": "incident_review",
+            "verified_by": reviewed_by,
+            "verified_at": now,
+            "created_at": now if not existing_kb_id else None,
+            "incident_pattern": incident_pattern,
+            "tags": sorted(set((incident_pattern.get("derived_tags", []) or []) + ["incident_review", use_case_label.lower().replace(" ", "_")])),
+            "review_notes": review_notes,
+        }
+
+        if kb_type == "true":
+            base.update({
+                "use_case": use_case_label,
+                "description": description or f"Verified true incident for {use_case_label}",
+                "key_indicators": {},
+                "risk_factors": {},
+                "outcome": workflow_outcome or "monitor",
+                "root_cause": likely_meaning,
+                "actions_taken": [],
+                "resolution_summary": resolution_summary or "Reviewed and confirmed as true incident.",
+            })
+        else:
+            base.update({
+                "reported_as": use_case_label,
+                "actual_issue": likely_meaning,
+                "false_positive_reason": resolution_summary or "Reviewed and confirmed as false report.",
+                "key_indicators": {},
+                "resolution": resolution_summary or "Reviewed and confirmed as false report.",
+            })
+
+        return {k: v for k, v in base.items() if v is not None}
+
+    def _extract_manufacturer_model(self, incident_data: Dict[str, Any]) -> Tuple[Optional[str], Optional[str]]:
+        manufacturer = None
+        model = None
+
+        manufacturer_field = incident_data.get("alarm_manufacturer") or incident_data.get("manufacturer")
+        if manufacturer_field and str(manufacturer_field).strip():
+            manufacturer = str(manufacturer_field).strip()
+
+        model_fields = (
+            "aico_model", "cav_model", "fa_model", "fh_model", "hw_model",
+            "kidde_model", "net_model", "nest_model", "other_model", "xs_model",
+            "model_number", "manufacturer_model", "model",
+        )
+        for key in model_fields:
+            value = incident_data.get(key)
+            if value not in (None, ""):
+                model = str(value).strip()
+                break
+
+        return manufacturer, model
+
+    def _extract_pattern_fields(self, incident_data: Dict[str, Any]) -> Dict[str, Any]:
+        normalized = self._normalize_incident_data(incident_data)
+        fields = {
+            "safety_state": normalized.get("is_safe"),
+            "symptom_level": normalized.get("co_symptoms"),
+            "alarm_type": normalized.get("alarm_type"),
+            "light_pattern": normalized.get("alarm_light_colour"),
+            "sound_pattern": normalized.get("alarm_sound_pattern"),
+            "state_now": self._pick_first_value(
+                normalized,
+                (
+                    "fa_now", "fh_now", "aico3030_now", "aico3018_now", "aico3028_now",
+                    "aico208_now", "aicogen_now", "kidde_now", "xs_now", "hw_now",
+                    "net_now", "nest_now", "cav_now", "other_now", "co_alarm_status",
+                ),
+            ),
+            "repeat_pattern": self._pick_first_value(
+                normalized,
+                (
+                    "fa_repeat", "fh_repeat", "aico3030_timing", "aico3018_timing",
+                    "aico3028_timing", "aico208_timing", "aicogen_timing",
+                    "kidde_repeat", "xs_repeat", "hw_repeat", "net_repeat",
+                    "nest_repeat", "cav_repeat", "other_repeat",
+                ),
+            ),
+            "likely_meaning": self._pick_first_value(
+                normalized,
+                (
+                    "fa_summary", "fh_summary", "aico3030_summary", "aico3018_summary",
+                    "aico3028_summary", "aico208_summary", "aicogen_summary",
+                    "kidde_summary", "xs_summary", "hw_summary", "net_summary",
+                    "nest_summary", "cav_summary", "other_summary",
+                ),
+            ),
+        }
+
+        if not fields["state_now"]:
+            fields["state_now"] = self._find_dynamic_answer_value(normalized, suffixes=("now",))
+        if not fields["repeat_pattern"]:
+            fields["repeat_pattern"] = self._find_dynamic_answer_value(
+                normalized,
+                suffixes=("repeat", "pattern", "timing"),
+            )
+        if not fields["likely_meaning"]:
+            fields["likely_meaning"] = self._find_dynamic_answer_value(
+                normalized,
+                suffixes=("issue", "summary", "hint", "app"),
+            )
+
+        return {key: value for key, value in fields.items() if value not in (None, "")}
+
+    def _pick_first_value(self, incident_data: Dict[str, Any], keys: Tuple[str, ...]) -> Optional[Any]:
+        for key in keys:
+            value = incident_data.get(key)
+            if value not in (None, ""):
+                return value
+        return None
+
+    def _derive_incident_tags(self, incident_data: Dict[str, Any]) -> List[str]:
+        normalized = self._normalize_incident_data(incident_data)
+        tags = set()
+
+        light = str(normalized.get("alarm_light_colour", "")).lower()
+        sound = str(normalized.get("alarm_sound_pattern", "")).lower()
+        symptoms = str(normalized.get("co_symptoms", "")).lower()
+        safety = str(normalized.get("is_safe", "")).lower()
+        likely = str(self._extract_pattern_fields(normalized).get("likely_meaning", "")).lower()
+
+        if "red" in light:
+            tags.add("red_light")
+        if "amber" in light or "yellow" in light:
+            tags.add("amber_or_yellow_light")
+        if "green" in light:
+            tags.add("green_light")
+
+        if "4" in sound and ("beep" in sound or "chirp" in sound):
+            tags.add("repeating_four_beep_pattern")
+        if "chirp" in sound:
+            tags.add("chirping")
+        if "silent" in sound:
+            tags.add("silent")
+
+        if "outside" in safety or "fresh air" in safety:
+            tags.add("evacuated")
+        if "inside" in safety:
+            tags.add("not_evacuated")
+        if "cannot move" in safety:
+            tags.add("immobile_occupant")
+
+        if "multiple" in symptoms:
+            tags.add("multiple_people_unwell")
+        elif symptoms and "no symptoms" not in symptoms:
+            tags.add("symptoms_present")
+
+        if "possible co alarm" in likely or "co alarm" in likely:
+            tags.add("possible_co_alarm")
+        if "battery" in likely:
+            tags.add("battery_issue")
+        if "end of life" in likely:
+            tags.add("end_of_life")
+        if "fault" in likely:
+            tags.add("fault")
+        if "normal" in likely:
+            tags.add("normal_pattern")
+
+        return list(tags)
 
     def _derive_kb_indicators(self, incident_data: Dict[str, Any]) -> Dict[str, bool]:
         """Derive KB-style boolean indicators from workflow structured data."""
@@ -1483,7 +2422,7 @@ class KBService:
             try:
                 result = check_fn(incident_data)
                 if result:
-                    derived[indicator] = True
+                    derived[self._canonicalize_indicator_name(indicator)] = True
             except Exception:
                 pass
         return derived
@@ -1500,35 +2439,52 @@ class KBService:
         text-based description matching for external/backfilled incidents
         that lack structured indicators.
         """
-        kb_indicators = kb_entry.get("key_indicators", {})
+        kb_indicators = self._canonicalize_indicator_map(kb_entry.get("key_indicators", {}))
         incident_data = self._normalize_incident_data(incident_data)
 
         # Derive KB-style indicators from workflow structured data
         derived_indicators = self._derive_kb_indicators(incident_data)
         # Merge: original incident_data fields + derived boolean indicators
         merged_data = {**incident_data, **derived_indicators}
+        merged_data = {
+            **merged_data,
+            **{
+                self._canonicalize_indicator_name(key): value
+                for key, value in merged_data.items()
+            },
+        }
 
         # --- Indicator-based matching ---
-        matches = 0
-        present_and_checked = 0
+        matched_weight = 0.0
+        checked_weight = 0.0
+        contradicted_weight = 0.0
+        total_weight = sum(self._indicator_weight(key) for key in kb_indicators) if kb_indicators else 0.0
 
         if kb_indicators:
             for key, expected_value in kb_indicators.items():
                 actual_value = merged_data.get(key)
+                weight = self._indicator_weight(key)
 
                 if actual_value is None:
                     continue  # Skip indicators not present in incident data
 
-                present_and_checked += 1
+                checked_weight += weight
                 if self._values_match(actual_value, expected_value):
-                    matches += 1
+                    matched_weight += weight
+                else:
+                    contradicted_weight += weight
 
-        if present_and_checked > 0:
-            similarity = matches / present_and_checked
-            coverage = present_and_checked / len(kb_indicators)
-            if coverage < 0.4:
-                similarity *= coverage
-            return similarity
+        if checked_weight > 0 and total_weight > 0:
+            precision = matched_weight / checked_weight if checked_weight else 0.0
+            coverage = checked_weight / total_weight
+            contradiction_ratio = contradicted_weight / checked_weight if checked_weight else 0.0
+            specificity = self._specificity_factor(kb_indicators)
+
+            # Sparse/generic entries should not reach 1.0 too easily.
+            coverage_factor = 0.35 + (0.65 * coverage)
+            contradiction_factor = max(0.25, 1.0 - (0.7 * contradiction_ratio))
+            similarity = precision * coverage_factor * specificity * contradiction_factor
+            return max(0.0, min(1.0, similarity))
 
         # --- Text-based fallback for incidents without key_indicators ---
         incident_desc = (incident_data.get("description") or "").lower()
@@ -1619,7 +2575,7 @@ class KBService:
     def add_true_incident(self, incident_data: Dict[str, Any]) -> str:
         """Add a verified true incident to KB"""
         import asyncio
-        kb_id = f"true_{len(self.true_incidents_kb) + 1:03d}"
+        kb_id = self._next_verified_kb_id("true")
         now = datetime.utcnow().isoformat()
         entry = {
             "kb_id": kb_id,
@@ -1640,7 +2596,7 @@ class KBService:
     def add_false_incident(self, incident_data: Dict[str, Any]) -> str:
         """Add a verified false incident to KB"""
         import asyncio
-        kb_id = f"false_{len(self.false_incidents_kb) + 1:03d}"
+        kb_id = self._next_verified_kb_id("false")
         now = datetime.utcnow().isoformat()
         entry = {
             "kb_id": kb_id,
@@ -1657,6 +2613,21 @@ class KBService:
         except RuntimeError:
             pass
         return kb_id
+
+    def _next_verified_kb_id(self, kb_type: str) -> str:
+        kb_list = self.true_incidents_kb if kb_type == "true" else self.false_incidents_kb
+        prefix = "true" if kb_type == "true" else "false"
+        max_num = 0
+
+        for entry in kb_list:
+            raw_id = str(entry.get("kb_id") or "").strip().lower()
+            if not raw_id.startswith(f"{prefix}_"):
+                continue
+            suffix = raw_id.split("_", 1)[1].strip()
+            if suffix.isdigit():
+                max_num = max(max_num, int(suffix))
+
+        return f"{prefix}_{max_num + 1:03d}"
 
     def get_true_incidents(self) -> List[Dict[str, Any]]:
         """Get all true incidents from KB"""
@@ -1713,7 +2684,7 @@ class KBService:
         risk_score: float
     ) -> Optional[str]:
         """
-        Automatically add KB entry from resolved incident
+        Store a resolved incident as a pending pattern for later KB review.
 
         Args:
             incident: Incident object
@@ -1722,106 +2693,25 @@ class KBService:
             risk_score: Calculated risk score
 
         Returns:
-            KB ID if added, None if not eligible
+            Incident ID if pattern stored
         """
-        # Determine KB type based on risk score
-        if risk_score > 0.7:
-            kb_type = "true"
-        elif risk_score < 0.3:
-            kb_type = "false"
-        else:
-            # Medium risk - don't add to KB automatically
-            logger.info(f"Incident {incident.incident_id} has medium risk ({risk_score:.2f}), not adding to KB")
-            return None
-
-        # Extract structured data
-        key_indicators = incident.structured_data or {}
-        risk_factors = {}
-
-        # Extract resolution data from the incident
-        checklist = getattr(incident, "resolution_checklist", None) or {}
-        root_cause = checklist.get("root_cause", "")
-        actions_taken = checklist.get("actions_taken", [])
-        verification_result = checklist.get("verification_result", "")
-        resolution_notes = getattr(incident, "resolution_notes", "") or ""
-
-        # Build a human-readable resolution summary
-        actions_summary = ", ".join(actions_taken) if isinstance(actions_taken, list) else str(actions_taken)
         use_case_label = incident.incident_type or getattr(incident, "classified_use_case", None) or "Unknown"
-        incident_label = "confirmed" if kb_type == "true" else "false"
-        resolution_summary = (
-            f"This was a {incident_label} incident of type '{use_case_label}'. "
-            f"Root cause: {root_cause or 'Not specified'}. "
-            f"Resolution: {actions_summary or 'Not specified'}."
+        incident_pattern = self.build_incident_pattern(
+            incident.structured_data or {},
+            use_case=use_case_label,
+            workflow_outcome=outcome,
+            incident_id=incident.incident_id,
         )
-
-        # Build KB entry with resolution data
-        if kb_type == "true":
-            kb_id = f"true_{len(self.true_incidents_kb) + 1:03d}"
-            entry = {
-                "kb_id": kb_id,
-                "tenant_id": incident.tenant_id,
-                "incident_id": incident.incident_id,
-                "use_case": use_case_label,
-                "description": incident.description,
-                "key_indicators": key_indicators,
-                "risk_factors": risk_factors,
-                "outcome": outcome,
-                "tags": [outcome, use_case_label.lower().replace(" ", "_"), "resolved"],
-                "source": "incident",
-                "verified_by": verified_by,
-                "verified_at": datetime.utcnow().isoformat(),
-                "created_at": datetime.utcnow().isoformat(),
-                # Resolution data for KB learning
-                "resolution_summary": resolution_summary,
-                "resolution_notes": resolution_notes,
-                "root_cause": root_cause,
-                "actions_taken": actions_taken,
-                "verification_result": verification_result,
-                "incident_verified_as": kb_type,
-            }
-            # Update existing KB entry for same use_case if present, else append
-            updated_entry = self._update_existing_kb_entry(self.true_incidents_kb, use_case_label, entry)
-            if not updated_entry:
-                self.true_incidents_kb.append(entry)
-                updated_entry = entry
-            logger.info(f"Added/updated true incident in KB: {kb_id} from incident {incident.incident_id}")
-            self._persist_entry_sync("true", updated_entry)
-            return kb_id
-        else:
-            kb_id = f"false_{len(self.false_incidents_kb) + 1:03d}"
-            entry = {
-                "kb_id": kb_id,
-                "tenant_id": incident.tenant_id,
-                "incident_id": incident.incident_id,
-                "reported_as": use_case_label,
-                "actual_issue": root_cause or "Low risk - likely false alarm",
-                "false_positive_reason": (
-                    root_cause if root_cause
-                    else f"Risk score {risk_score:.2f} below threshold"
-                ),
-                "key_indicators": key_indicators,
-                "tags": ["false_alarm", use_case_label.lower().replace(" ", "_")],
-                "source": "incident",
-                "verified_by": verified_by,
-                "verified_at": datetime.utcnow().isoformat(),
-                "created_at": datetime.utcnow().isoformat(),
-                # Resolution data for KB learning
-                "resolution_summary": resolution_summary,
-                "resolution_notes": resolution_notes,
-                "root_cause": root_cause,
-                "actions_taken": actions_taken,
-                "verification_result": verification_result,
-                "incident_verified_as": kb_type,
-            }
-            # Update existing KB entry for same use_case if present, else append
-            updated_entry = self._update_existing_kb_entry(self.false_incidents_kb, use_case_label, entry)
-            if not updated_entry:
-                self.false_incidents_kb.append(entry)
-                updated_entry = entry
-            logger.info(f"Added/updated false incident in KB: {kb_id} from incident {incident.incident_id}")
-            self._persist_entry_sync("false", updated_entry)
-            return kb_id
+        incident_pattern["resolved_by"] = verified_by
+        incident_pattern["resolution_risk_score"] = risk_score
+        incident_pattern["resolution_notes"] = getattr(incident, "resolution_notes", "") or ""
+        incident_pattern["verification_status"] = "pending_review"
+        self.add_incident_pattern(incident_pattern)
+        logger.info(
+            "Stored resolved incident %s as pending incident_pattern for later KB review",
+            incident.incident_id,
+        )
+        return incident.incident_id
 
     def _update_existing_kb_entry(
         self,

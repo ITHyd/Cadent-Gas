@@ -1,10 +1,53 @@
 export const API_BASE_URL = import.meta.env.VITE_API_URL || '';
 
+const readErrorMessage = async (response, fallbackMessage) => {
+  const contentType = response.headers.get('content-type') || '';
+
+  if (contentType.includes('application/json')) {
+    const error = await response.json().catch(() => ({}));
+    return error.detail || error.message || fallbackMessage;
+  }
+
+  const text = await response.text().catch(() => '');
+  return text || fallbackMessage;
+};
+
 // ── Auth helpers ──────────────────────────────────────────────────────────
 
 const getAuthHeaders = () => {
   const token = localStorage.getItem('access_token');
   return token ? { Authorization: `Bearer ${token}` } : {};
+};
+
+const clearStoredAuth = () => {
+  localStorage.removeItem('access_token');
+  localStorage.removeItem('refresh_token');
+};
+
+const notifyAuthExpired = () => {
+  window.dispatchEvent(new Event('auth-expired'));
+};
+
+const parseJwtPayload = (token) => {
+  try {
+    const payload = token?.split('.')?.[1];
+    if (!payload) return null;
+
+    const normalized = payload
+      .replace(/-/g, '+')
+      .replace(/_/g, '/')
+      .padEnd(Math.ceil(payload.length / 4) * 4, '=');
+
+    return JSON.parse(window.atob(normalized));
+  } catch {
+    return null;
+  }
+};
+
+const isTokenExpiringSoon = (token, minValiditySeconds = 30) => {
+  const payload = parseJwtPayload(token);
+  if (!payload?.exp) return true;
+  return payload.exp * 1000 - Date.now() <= minValiditySeconds * 1000;
 };
 
 let _refreshPromise = null;
@@ -42,6 +85,26 @@ const tryRefreshToken = async () => {
   return _refreshPromise;
 };
 
+export const ensureFreshAccessToken = async ({ minValiditySeconds = 30 } = {}) => {
+  const currentToken = localStorage.getItem('access_token');
+  if (currentToken && !isTokenExpiringSoon(currentToken, minValiditySeconds)) {
+    return currentToken;
+  }
+
+  const hadSession = Boolean(currentToken || localStorage.getItem('refresh_token'));
+  const refreshed = await tryRefreshToken();
+  const nextToken = localStorage.getItem('access_token');
+  if (refreshed && nextToken) {
+    return nextToken;
+  }
+
+  if (hadSession) {
+    clearStoredAuth();
+    notifyAuthExpired();
+  }
+  return null;
+};
+
 export const authFetch = async (url, options = {}) => {
   const headers = { ...getAuthHeaders(), ...(options.headers || {}) };
   const response = await fetch(url, { ...options, headers });
@@ -56,9 +119,8 @@ export const authFetch = async (url, options = {}) => {
     }
 
     // Refresh failed — clear everything and signal logout
-    localStorage.removeItem('access_token');
-    localStorage.removeItem('refresh_token');
-    window.dispatchEvent(new Event('auth-expired'));
+    clearStoredAuth();
+    notifyAuthExpired();
   }
 
   return response;
@@ -73,8 +135,7 @@ export const sendOTP = async (phone) => {
     body: JSON.stringify({ phone }),
   });
   if (!response.ok) {
-    const error = await response.json();
-    throw new Error(error.detail || 'Failed to send OTP');
+    throw new Error(await readErrorMessage(response, 'Failed to send OTP'));
   }
   return response.json();
 };
@@ -86,8 +147,7 @@ export const verifyOTP = async (phone, otp) => {
     body: JSON.stringify({ phone, otp }),
   });
   if (!response.ok) {
-    const error = await response.json();
-    throw new Error(error.detail || 'Invalid OTP');
+    throw new Error(await readErrorMessage(response, 'Invalid OTP'));
   }
   return response.json();
 };
@@ -99,8 +159,7 @@ export const adminLogin = async (username, password) => {
     body: JSON.stringify({ username, password }),
   });
   if (!response.ok) {
-    const error = await response.json();
-    throw new Error(error.detail || 'Login failed');
+    throw new Error(await readErrorMessage(response, 'Login failed'));
   }
   return response.json();
 };

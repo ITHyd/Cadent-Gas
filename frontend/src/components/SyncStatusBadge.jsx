@@ -7,8 +7,6 @@
  *
  * Renders nothing if externalRef is falsy or empty.
  */
-import React from 'react';
-
 const STATUS_CONFIG = {
   linked: {
     bg: '#f0fdf4',

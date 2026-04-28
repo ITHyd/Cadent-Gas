@@ -1,10 +1,9 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { formatUseCase } from '../utils/formatters';
 import {
   getKBStats,
   getTrueIncidentsKB,
   getFalseIncidentsKB,
-  getRecentKBEntries,
   addKBEntry,
   updateKBEntry,
   deleteKBEntry,
@@ -13,16 +12,23 @@ import {
 import CustomSelect from '../components/CustomSelect';
 import { useAuth } from '../contexts/AuthContext';
 
-// ── Outcome color mapping ──────────────────────────────────────────────
-const OUTCOME_COLORS = {
-  emergency_dispatch: { bg: '#fef2f2', color: '#991b1b', border: '#fecaca', label: 'Emergency Dispatch' },
-  schedule_engineer: { bg: '#fffbeb', color: '#92400e', border: '#fde68a', label: 'Schedule Engineer' },
-  close_with_guidance: { bg: '#ecfdf5', color: '#065f46', border: '#a7f3d0', label: 'Close with Guidance' },
-  monitor: { bg: '#eff6ff', color: '#1e40af', border: '#bfdbfe', label: 'Monitor' },
-  false_report: { bg: '#f3f4f6', color: '#374151', border: '#d1d5db', label: 'False Report' },
+const formatKbDisplayId = (entry) => {
+  const rawId = String(entry?.kb_id || entry?.id || '').trim();
+  const normalized = rawId.toLowerCase();
+  const trueMatch = normalized.match(/^(?:co_)?(?:seed_)?true_(\d+)$/);
+  const falseMatch = normalized.match(/^(?:co_)?(?:seed_)?false_(\d+)$/);
+
+  if (trueMatch) return `true_${trueMatch[1].padStart(3, '0')}`;
+  if (falseMatch) return `false_${falseMatch[1].padStart(3, '0')}`;
+  return rawId || 'N/A';
 };
 
-const getOutcomeStyle = (outcome) => OUTCOME_COLORS[outcome] || { bg: '#f3f4f6', color: '#374151', border: '#d1d5db', label: outcome || 'N/A' };
+const buildSequentialKbDisplayId = (kbType, indexOnPage, page, pageSize, totalItems) => {
+  const prefix = kbType === 'true' ? 'true' : 'false';
+  const absoluteIndex = ((page - 1) * pageSize) + indexOnPage;
+  const sequence = Math.max(totalItems - absoluteIndex, 1);
+  return `${prefix}_${String(sequence).padStart(3, '0')}`;
+};
 
 const KnowledgeBase = () => {
   const { user } = useAuth();
@@ -50,6 +56,7 @@ const KnowledgeBase = () => {
       const data = await getKBStats(tenantId);
       setStats(data);
     } catch {
+      return;
     }
   };
 
@@ -64,6 +71,7 @@ const KnowledgeBase = () => {
         setFalseIncidents(data);
       }
     } catch {
+      return;
     } finally {
       setLoading(false);
     }
@@ -80,6 +88,7 @@ const KnowledgeBase = () => {
         setFalseIncidents({ items: data.results, total: data.total, page: 1, pages: 1 });
       }
     } catch {
+      return;
     } finally {
       setLoading(false);
     }
@@ -92,6 +101,7 @@ const KnowledgeBase = () => {
       loadKBData();
       loadStats();
     } catch {
+      return;
     }
   };
 
@@ -177,43 +187,33 @@ const KnowledgeBase = () => {
                 <tr>
                   <th style={styles.th}>ID</th>
                   <th style={{...styles.th, width: activeTab === 'true' ? '12%' : '12%'}}>Use Case</th>
-                  <th style={{...styles.th, width: '35%'}}>Description</th>
-                  <th style={styles.th}>{activeTab === 'true' ? 'Outcome' : 'Actual Issue'}</th>
+                  <th style={{...styles.th, width: '45%'}}>Description</th>
                   <th style={styles.th}>Tags</th>
-                  <th style={styles.th}>Source</th>
                   <th style={{...styles.th, textAlign: 'center'}}>Actions</th>
                 </tr>
               </thead>
               <tbody>
-                {currentData.items.map((entry) => {
-                  const outcomeStyle = activeTab === 'true' ? getOutcomeStyle(entry.outcome) : null;
+                {currentData.items.map((entry, index) => {
+                  const displayKbId = buildSequentialKbDisplayId(
+                    activeTab,
+                    index,
+                    currentPage,
+                    pageSize,
+                    currentData.total || currentData.items.length,
+                  );
+                  const entryWithDisplayId = { ...entry, display_kb_id: displayKbId };
                   return (
-                    <tr key={entry.kb_id} style={styles.tr} onClick={() => handleView(entry)} title="Click to view details">
-                      <td style={{...styles.td, fontFamily: 'monospace', fontSize: '0.78rem', color: '#6b7280', whiteSpace: 'nowrap'}}>{entry.kb_id}</td>
+                    <tr key={entry.kb_id} style={styles.tr} onClick={() => handleView(entryWithDisplayId)} title="Click to view details">
+                      <td style={{...styles.td, fontFamily: 'monospace', fontSize: '0.78rem', color: '#6b7280', whiteSpace: 'nowrap'}}>{displayKbId}</td>
                       <td style={styles.td}>
                         <span style={styles.useCaseBadge}>
                           {(entry.use_case || entry.reported_as || 'N/A').replace(/_/g, ' ')}
                         </span>
                       </td>
-                      <td style={{...styles.td, maxWidth: '400px'}}>
+                      <td style={{...styles.td, maxWidth: '520px'}}>
                         <div style={{overflow: 'hidden', textOverflow: 'ellipsis', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', lineHeight: '1.4'}}>
-                          {entry.description || entry.false_positive_reason || 'N/A'}
+                          {entry.description || entry.false_positive_reason || entry.actual_issue || 'N/A'}
                         </div>
-                      </td>
-                      <td style={styles.td}>
-                        {activeTab === 'true' && outcomeStyle ? (
-                          <span style={{
-                            padding: '4px 10px', borderRadius: '6px', fontSize: '0.75rem', fontWeight: 600,
-                            backgroundColor: outcomeStyle.bg, color: outcomeStyle.color, border: `1px solid ${outcomeStyle.border}`,
-                            whiteSpace: 'nowrap',
-                          }}>
-                            {outcomeStyle.label}
-                          </span>
-                        ) : (
-                          <span style={{fontSize: '0.82rem', color: '#374151', lineHeight: '1.3', display: 'block', maxWidth: '200px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap'}}>
-                            {entry.actual_issue || 'N/A'}
-                          </span>
-                        )}
                       </td>
                       <td style={styles.td}>
                         <div style={{display: 'flex', flexWrap: 'wrap', gap: '3px', maxWidth: '180px'}}>
@@ -225,20 +225,12 @@ const KnowledgeBase = () => {
                           )}
                         </div>
                       </td>
-                      <td style={styles.td}>
-                        <span style={{
-                          ...styles.badge,
-                          backgroundColor: entry.source === 'incident' ? '#10b981' : entry.source === 'research' ? '#6366f1' : '#6b7280'
-                        }}>
-                          {entry.source || 'manual'}
-                        </span>
-                      </td>
                       <td style={{...styles.td, textAlign: 'center'}} onClick={(e) => e.stopPropagation()}>
                         <div style={styles.actionButtons}>
-                          <button onClick={() => handleView(entry)} style={styles.actionButton} title="View Details">
+                          <button onClick={() => handleView(entryWithDisplayId)} style={styles.actionButton} title="View Details">
                             <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#6366f1" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
                           </button>
-                          <button onClick={() => handleEdit(entry)} style={styles.actionButton} title="Edit">
+                          <button onClick={() => handleEdit(entryWithDisplayId)} style={styles.actionButton} title="Edit">
                             <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#64748b" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
                           </button>
                           <button onClick={() => handleDelete(entry.kb_id, activeTab)} style={styles.actionButton} title="Delete">
@@ -299,7 +291,22 @@ const KnowledgeBase = () => {
 // ── View Detail Modal ──────────────────────────────────────────────────
 const ViewKBModal = ({ entry, kbType, onClose, onEdit }) => {
   const isTrue = kbType === 'true';
-  const outcomeStyle = isTrue ? getOutcomeStyle(entry.outcome) : null;
+  const incidentPattern = entry.incident_pattern || {};
+  const patternFields = incidentPattern.pattern_fields || {};
+  const manufacturer = incidentPattern.manufacturer || entry.manufacturer || null;
+  const model = incidentPattern.model || entry.model || null;
+  const workflowOutcome = incidentPattern.workflow_outcome || entry.outcome || null;
+  const summaryText = isTrue
+    ? (entry.description || entry.root_cause || entry.resolution_summary || 'N/A')
+    : (entry.false_positive_reason || entry.actual_issue || entry.resolution || 'N/A');
+  const likelyMeaning = entry.root_cause || entry.actual_issue || patternFields.likely_meaning || null;
+  const detailRows = [
+    { label: isTrue ? 'Use Case' : 'Reported As', value: formatUseCase(entry.use_case || entry.reported_as || '') || 'N/A' },
+    { label: 'Manufacturer', value: manufacturer },
+    { label: 'Model', value: model },
+    { label: 'Outcome', value: workflowOutcome ? formatUseCase(String(workflowOutcome).replace(/_/g, ' ')) : null },
+    { label: isTrue ? 'Likely Cause' : 'Actual Issue', value: likelyMeaning },
+  ].filter((row) => row.value);
 
   const Section = ({ title, children, icon }) => (
     <div style={{marginBottom: '16px'}}>
@@ -310,25 +317,6 @@ const ViewKBModal = ({ entry, kbType, onClose, onEdit }) => {
       <div style={{fontSize: '0.88rem', color: '#1e293b', lineHeight: '1.55'}}>{children}</div>
     </div>
   );
-
-  const IndicatorList = ({ indicators }) => {
-    if (!indicators || Object.keys(indicators).length === 0) return <span style={{color: '#94a3b8', fontStyle: 'italic'}}>None specified</span>;
-    return (
-      <div style={{display: 'flex', flexWrap: 'wrap', gap: '5px'}}>
-        {Object.entries(indicators).map(([key, val]) => (
-          <span key={key} style={{
-            padding: '3px 10px', borderRadius: '6px', fontSize: '0.76rem', fontWeight: 500,
-            backgroundColor: val === true ? '#ecfdf5' : val === false ? '#fef2f2' : '#f0f9ff',
-            color: val === true ? '#065f46' : val === false ? '#991b1b' : '#030304',
-            border: `1px solid ${val === true ? '#a7f3d0' : val === false ? '#fecaca' : '#bae6fd'}`,
-          }}>
-            {key.replace(/_/g, ' ')}
-            {typeof val === 'number' && <span style={{marginLeft: '4px', opacity: 0.7}}>({val})</span>}
-          </span>
-        ))}
-      </div>
-    );
-  };
 
   return (
     <div style={styles.modalOverlay} onClick={onClose}>
@@ -347,7 +335,7 @@ const ViewKBModal = ({ entry, kbType, onClose, onEdit }) => {
               }}>
                 {isTrue ? 'True Incident' : 'False Alarm'}
               </span>
-              <span style={{fontFamily: 'monospace', fontSize: '0.78rem', color: '#64748b'}}>{entry.kb_id}</span>
+              <span style={{fontFamily: 'monospace', fontSize: '0.78rem', color: '#64748b'}}>{entry.display_kb_id || formatKbDisplayId(entry)}</span>
             </div>
             <div style={{fontSize: '0.82rem', fontWeight: 600, color: '#374151', marginTop: '2px'}}>
               {formatUseCase(entry.use_case || entry.reported_as || '')}
@@ -360,85 +348,44 @@ const ViewKBModal = ({ entry, kbType, onClose, onEdit }) => {
 
         {/* Body */}
         <div style={{padding: '20px 24px', maxHeight: '60vh', overflowY: 'auto'}}>
-          {isTrue ? (
-            <>
-              <Section title="Description">
-                {entry.description || 'N/A'}
-              </Section>
+          <Section title="Summary">
+            <div style={{padding: '10px 14px', borderRadius: '10px', backgroundColor: isTrue ? '#f0fdf4' : '#fff7ed', border: `1px solid ${isTrue ? '#bbf7d0' : '#fed7aa'}`, color: isTrue ? '#166534' : '#9a3412'}}>
+              {summaryText}
+            </div>
+          </Section>
 
-              {outcomeStyle && (
-                <Section title="Outcome" icon="">
-                  <span style={{
-                    padding: '5px 14px', borderRadius: '8px', fontSize: '0.82rem', fontWeight: 600,
-                    backgroundColor: outcomeStyle.bg, color: outcomeStyle.color, border: `1px solid ${outcomeStyle.border}`,
-                  }}>
-                    {outcomeStyle.label}
-                  </span>
-                </Section>
-              )}
-
-              <Section title="Key Indicators">
-                <IndicatorList indicators={entry.key_indicators} />
-              </Section>
-
-              <Section title="Risk Factors">
-                <IndicatorList indicators={entry.risk_factors} />
-              </Section>
-
-              {entry.root_cause && (
-                <Section title="Root Cause" icon="">
-                  <div style={{padding: '10px 14px', borderRadius: '10px', backgroundColor: '#fef2f2', border: '1px solid #fecaca', color: '#991b1b'}}>
-                    {entry.root_cause}
+          {detailRows.length > 0 && (
+            <Section title="Classification">
+              <div style={{display: 'grid', gap: '8px'}}>
+                {detailRows.map((row) => (
+                  <div key={row.label} style={{display: 'grid', gridTemplateColumns: '140px 1fr', gap: '10px', alignItems: 'start'}}>
+                    <span style={{fontSize: '0.78rem', color: '#64748b', fontWeight: 700}}>{row.label}</span>
+                    <span style={{fontSize: '0.86rem', color: '#1e293b'}}>{row.value}</span>
                   </div>
-                </Section>
-              )}
+                ))}
+              </div>
+            </Section>
+          )}
 
-              {entry.actions_taken && (
-                <Section title="Actions Taken" icon="">
-                  <div style={{padding: '10px 14px', borderRadius: '10px', backgroundColor: '#eff6ff', border: '1px solid #bfdbfe', color: '#1e40af'}}>
-                    {entry.actions_taken}
+          {patternFields && Object.keys(patternFields).length > 0 && (
+            <Section title="Pattern Details">
+              <div style={{display: 'grid', gap: '8px'}}>
+                {Object.entries(patternFields).map(([field, value]) => (
+                  <div key={field} style={{display: 'grid', gridTemplateColumns: '140px 1fr', gap: '10px', alignItems: 'start'}}>
+                    <span style={{fontSize: '0.78rem', color: '#64748b', fontWeight: 700}}>{field.replace(/_/g, ' ')}</span>
+                    <span style={{fontSize: '0.86rem', color: '#1e293b'}}>{String(value)}</span>
                   </div>
-                </Section>
-              )}
+                ))}
+              </div>
+            </Section>
+          )}
 
-              {entry.resolution_summary && (
-                <Section title="Resolution Summary" icon="">
-                  <div style={{padding: '10px 14px', borderRadius: '10px', backgroundColor: '#ecfdf5', border: '1px solid #a7f3d0', color: '#065f46'}}>
-                    {entry.resolution_summary}
-                  </div>
-                </Section>
-              )}
-            </>
-          ) : (
-            <>
-              <Section title="Reported As">
-                <span style={styles.useCaseBadge}>
-                  {(entry.reported_as || 'N/A').replace(/_/g, ' ')}
-                </span>
-              </Section>
-
-              <Section title="Actual Issue">
-                <div style={{padding: '10px 14px', borderRadius: '10px', backgroundColor: '#fffbeb', border: '1px solid #fde68a', color: '#92400e'}}>
-                  {entry.actual_issue || 'N/A'}
-                </div>
-              </Section>
-
-              <Section title="False Positive Reason">
-                {entry.false_positive_reason || 'N/A'}
-              </Section>
-
-              <Section title="Key Indicators">
-                <IndicatorList indicators={entry.key_indicators} />
-              </Section>
-
-              {entry.resolution && (
-                <Section title="Resolution" icon="">
-                  <div style={{padding: '10px 14px', borderRadius: '10px', backgroundColor: '#ecfdf5', border: '1px solid #a7f3d0', color: '#065f46'}}>
-                    {entry.resolution}
-                  </div>
-                </Section>
-              )}
-            </>
+          {(entry.resolution_summary || entry.resolution || entry.review_notes) && (
+            <Section title="Review Notes">
+              <div style={{padding: '10px 14px', borderRadius: '10px', backgroundColor: '#eff6ff', border: '1px solid #bfdbfe', color: '#1d4ed8'}}>
+                {entry.review_notes || entry.resolution_summary || entry.resolution}
+              </div>
+            </Section>
           )}
 
           {/* Tags */}
@@ -454,9 +401,6 @@ const ViewKBModal = ({ entry, kbType, onClose, onEdit }) => {
 
           {/* Metadata */}
           <div style={{display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginTop: '8px', paddingTop: '12px', borderTop: '1px solid #e2e8f0'}}>
-            <div style={{fontSize: '0.78rem', color: '#94a3b8'}}>
-              Source: <span style={{fontWeight: 600, color: '#475569'}}>{entry.source || 'manual'}</span>
-            </div>
             <div style={{fontSize: '0.78rem', color: '#94a3b8'}}>
               Verified by: <span style={{fontWeight: 600, color: '#475569'}}>{entry.verified_by || 'system'}</span>
             </div>
@@ -561,6 +505,7 @@ const AddKBModal = ({ kbType, onClose, onSuccess }) => {
       await addKBEntry(kbType, entry, 'admin_user');
       onSuccess();
     } catch {
+      return;
     }
   };
 
@@ -615,13 +560,14 @@ const EditKBModal = ({ entry, kbType, onClose, onSuccess }) => {
       await updateKBEntry(kbType, entry.kb_id, updates);
       onSuccess();
     } catch {
+      return;
     }
   };
 
   return (
     <div style={styles.modalOverlay} onClick={onClose}>
       <div style={{...styles.modal, borderRadius: '16px'}} onClick={(e) => e.stopPropagation()}>
-        <h2 style={styles.modalTitle}>Edit KB Entry: {entry.kb_id}</h2>
+        <h2 style={styles.modalTitle}>Edit KB Entry: {entry.display_kb_id || formatKbDisplayId(entry)}</h2>
         <form onSubmit={handleSubmit}>
           {kbType === 'true' ? (
             <>

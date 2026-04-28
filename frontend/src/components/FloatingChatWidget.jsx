@@ -16,19 +16,15 @@ import React, {
 import { useNavigate } from "react-router-dom";
 import { connectWebSocket } from "../services/websocket";
 import { getTenantWorkflows, lookupCustomerByPhone } from "../services/api";
+import {
+  normalizeDemoReferenceId,
+} from "../constants/referenceIds";
 import ChatMessage from "./ChatMessage";
 import { formatUseCase } from "../utils/formatters";
 
 const DEFAULT_GRADIENT = "#8DE971";
 
 const formatUseCaseName = formatUseCase;
-const REPORTER_TYPE_OPTIONS = [
-  { label: "Occupier", value: "occupier" },
-  { label: "GSRI", value: "gsri" },
-  { label: "Landlord / HA", value: "landlord_ha" },
-  { label: "Emergency Services", value: "emergency_services" },
-  { label: "Remote Detector", value: "remote_detector" },
-];
 const HIDDEN_STARTER_USE_CASES = new Set([
   "co_alarm_fireangel",
   "co_alarm_firehawk",
@@ -65,14 +61,13 @@ const FloatingChatWidget = forwardRef(function FloatingChatWidget(
   const [isConnected, setIsConnected] = useState(false);
   const [incidentStarted, setIncidentStarted] = useState(false);
   const [isTyping, setIsTyping] = useState(false);
-  const [isProcessing, setIsProcessing] = useState(false);
+  const [isProcessing] = useState(false);
   const [availableWorkflows, setAvailableWorkflows] = useState([]);
   const [workflowStarted, setWorkflowStarted] = useState(false);
   const [chatOpen, setChatOpen] = useState(false);
   const [showAllCategories, setShowAllCategories] = useState(false);
-  const [selectedReporterType, setSelectedReporterType] = useState(null);
-  const [isReporterSelectionPending, setIsReporterSelectionPending] =
-    useState(false);
+  const [selectedReferenceId, setSelectedReferenceId] = useState(null);
+  const [isReferenceIdPending, setIsReferenceIdPending] = useState(false);
 
   // On-behalf-of-customer flow (company/call-center role)
   const isCallCenter = userRole === "company";
@@ -82,12 +77,24 @@ const FloatingChatWidget = forwardRef(function FloatingChatWidget(
   const messagesEndRef = useRef(null);
   const wsRef = useRef(null);
   const pendingFirstInputRef = useRef(null);
+  const referenceValidationPendingRef = useRef(false);
+  const reconnectTimerRef = useRef(null);
+  const reconnectAttemptsRef = useRef(0);
+  const manualCloseRef = useRef(false);
+  const incidentIdRef = useRef("");
+  const activeUseCaseRef = useRef("");
+  const hasStartedWorkflowRef = useRef(false);
+  const completedRef = useRef(false);
 
   // Expose open() so parent (hero button) can programmatically open the widget
   useImperativeHandle(ref, () => ({
     open: () => {
       setChatOpen(true);
-      if (!incidentStarted) startIncident();
+      if (!incidentStarted) {
+        startIncident();
+      } else if (!wsRef.current || wsRef.current.readyState > WebSocket.OPEN) {
+        startIncident({ reconnect: true });
+      }
     },
   }));
 
@@ -325,6 +332,14 @@ const FloatingChatWidget = forwardRef(function FloatingChatWidget(
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
+  useEffect(() => () => {
+    manualCloseRef.current = true;
+    clearTimeout(reconnectTimerRef.current);
+    if (wsRef.current && wsRef.current.readyState <= WebSocket.OPEN) {
+      wsRef.current.close();
+    }
+  }, []);
+
   const addAgentMessage = (content, data = {}) => {
     setMessages((prev) => [
       ...prev,
@@ -338,133 +353,185 @@ const FloatingChatWidget = forwardRef(function FloatingChatWidget(
     ]);
   };
 
-  const getReporterTypePrompt = () => {
-    if (customerDetails) {
-      return "Please choose the reporter type to continue this report.";
-    }
-
-    const firstName = userDetails?.name ? userDetails.name.split(" ")[0] : "";
-    return firstName
-      ? `Hi ${firstName}! Before we begin, please choose the reporter type.`
-      : "Hello! Before we begin, please choose the reporter type.";
+  const promptForReportType = () => {
+    addAgentMessage(
+      "Thanks. Now choose the report type to get the right triage flow, or describe the issue in your own words.",
+      { reportTypePrompt: true },
+    );
   };
 
-  const promptForReporterType = ({ replace = false } = {}) => {
-    setIsReporterSelectionPending(true);
-    const reporterPromptMessage = {
-      id: `msg_${Date.now()}`,
+  const promptForCustomerPhone = () => {
+    setPhoneCollectionPhase(true);
+    addAgentMessage(
+      "Please enter the customer's registered phone number to look up their details.",
+      { phonePrompt: true },
+    );
+  };
+
+  const promptForReferenceId = ({ replace = false } = {}) => {
+    setIsReferenceIdPending(true);
+    const refPromptMessage = {
+      id: `msg_${Date.now()}_ref_prompt`,
       role: "agent",
-      content: getReporterTypePrompt(),
+      content: "Please enter the REF ID before we begin.",
       timestamp: new Date().toISOString(),
       data: {
-        reporterTypePrompt: true,
-        options: REPORTER_TYPE_OPTIONS.map((option) => option.label),
+        refIdPrompt: true,
       },
     };
 
     if (replace) {
-      setMessages([reporterPromptMessage]);
+      setMessages([refPromptMessage]);
       return;
     }
 
-    setMessages((prev) => [...prev, reporterPromptMessage]);
+    setMessages((prev) => [...prev, refPromptMessage]);
   };
 
-  const handleReporterTypeSelect = (reporterOption) => {
-    const reporterType =
-      typeof reporterOption === "string"
-        ? REPORTER_TYPE_OPTIONS.find(
-            (option) => option.label === reporterOption,
-          )
-        : reporterOption;
+  const handleReferenceIdSelect = (
+    referenceOption,
+    { appendUserMessage = true, displayValue } = {},
+  ) => {
+    const normalizedReferenceId =
+      normalizeDemoReferenceId(
+        typeof referenceOption === "string"
+          ? referenceOption
+          : referenceOption?.label,
+      ) || normalizeDemoReferenceId(referenceOption);
 
-    if (!reporterType) return;
+    if (!normalizedReferenceId) {
+      addAgentMessage(
+        "Please enter a valid REF ID to continue.",
+        {
+          refIdPrompt: true,
+        },
+      );
+      return;
+    }
 
-    setSelectedReporterType(reporterType);
-    setIsReporterSelectionPending(false);
-    if (isCallCenter) {
-      setPhoneCollectionPhase(true);
+    setSelectedReferenceId(normalizedReferenceId);
+    setIsReferenceIdPending(false);
+    if (appendUserMessage) {
       setMessages((prev) => [
         ...prev,
         {
           id: `msg_${Date.now()}`,
           role: "user",
-          content: reporterType.label,
+          content: displayValue || normalizedReferenceId,
           timestamp: new Date().toISOString(),
-        },
-        {
-          id: `msg_${Date.now()}_phone_prompt`,
-          role: "agent",
-          content:
-            "Thanks. Please enter the customer's registered phone number to look up their details.",
-          timestamp: new Date().toISOString(),
-          data: { phonePrompt: true },
         },
       ]);
+    }
+    setPhoneCollectionPhase(false);
+
+    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+      referenceValidationPendingRef.current = true;
+      activeUseCaseRef.current = "";
+      sendStartOrResume(wsRef.current, {
+        useCase: "",
+        extraInitialData: { reference_id: normalizedReferenceId },
+      });
       return;
     }
 
-    setMessages((prev) => [
-      ...prev,
-      {
-        id: `msg_${Date.now()}`,
-        role: "user",
-        content: reporterType.label,
-        timestamp: new Date().toISOString(),
-      },
-      {
-        id: `msg_${Date.now()}_report_type`,
-        role: "agent",
-        content:
-          "Thanks. Now choose the report type to get the right triage flow, or describe the issue in your own words.",
-        timestamp: new Date().toISOString(),
-        data: { reportTypePrompt: true },
-      },
-    ]);
+    if (isCallCenter) {
+      promptForCustomerPhone();
+      return;
+    }
+    promptForReportType();
   };
 
-  const startIncident = () => {
+  const startIncident = async ({ reconnect = false } = {}) => {
     setChatOpen(true);
+    manualCloseRef.current = false;
     const newSessionId = `session_${Date.now()}`;
     setSessionId(newSessionId);
-    setIncidentStarted(true);
-    setWorkflowStarted(false);
-    setShowAllCategories(false);
-    setSelectedReporterType(null);
-    setIsReporterSelectionPending(false);
-    setCustomerDetails(null);
-    setPhoneCollectionPhase(false);
+    if (!reconnect) {
+      incidentIdRef.current = `incident_${Date.now()}`;
+      activeUseCaseRef.current = "";
+      hasStartedWorkflowRef.current = false;
+      completedRef.current = false;
+      setIncidentStarted(true);
+      setWorkflowStarted(false);
+      setShowAllCategories(false);
+      setSelectedReferenceId(null);
+      setIsReferenceIdPending(false);
+      setCustomerDetails(null);
+      setPhoneCollectionPhase(false);
+      referenceValidationPendingRef.current = false;
+    }
 
-    const ws = connectWebSocket(newSessionId);
-    wsRef.current = ws;
-
-    ws.onopen = () => {
-      setIsConnected(true);
-
-      if (isCallCenter) {
-        promptForReporterType({ replace: true });
-      } else {
-        promptForReporterType({ replace: true });
+    try {
+      const ws = await connectWebSocket(newSessionId);
+      attachSocketHandlers(ws, { reconnect });
+    } catch (error) {
+      setIsConnected(false);
+      if (reconnect) {
+        scheduleReconnect();
+        return;
       }
-    };
-
-    ws.onmessage = (event) => {
-      const response = JSON.parse(event.data);
-      handleAgentMessage(response);
-    };
-
-    ws.onerror = () => setIsConnected(false);
-    ws.onclose = () => setIsConnected(false);
+      setMessages([
+        {
+          id: `msg_${Date.now()}`,
+          role: "agent",
+          content: error.message || "Your session expired. Please sign in again.",
+          timestamp: new Date().toISOString(),
+        },
+      ]);
+    }
   };
 
   const handleAgentMessage = (response) => {
+    if (response.type === "typing") {
+      setIsTyping(Boolean(response.typing));
+      return;
+    }
+
     if (response.type === "agent_message") {
       const newSid = response.session_id;
       if (newSid && newSid !== sessionId) {
         setSessionId(newSid);
       }
 
-      if (pendingFirstInputRef.current && newSid) {
+      if (response.action === "reference_id_prompt") {
+        setIsReferenceIdPending(true);
+        setSelectedReferenceId(null);
+      } else if (
+        response.action === "awaiting_incident_report" ||
+        response.action === "reference_id_exists" ||
+        response.action === "open_existing_incident"
+      ) {
+        setIsReferenceIdPending(false);
+      }
+
+      if (
+        referenceValidationPendingRef.current &&
+        response.action === "awaiting_incident_report"
+      ) {
+        referenceValidationPendingRef.current = false;
+        setIsTyping(false);
+        if (isCallCenter && !customerDetails) {
+          promptForCustomerPhone();
+        } else {
+          promptForReportType();
+        }
+        return;
+      }
+
+      if (response.action === "reference_id_exists") {
+        referenceValidationPendingRef.current = false;
+        setPhoneCollectionPhase(false);
+      }
+
+      if (response.action === "reference_id_prompt") {
+        referenceValidationPendingRef.current = false;
+      }
+
+      if (
+        pendingFirstInputRef.current &&
+        newSid &&
+        response.action === "awaiting_incident_report"
+      ) {
         const firstInput = pendingFirstInputRef.current;
         pendingFirstInputRef.current = null;
         setTimeout(() => {
@@ -485,8 +552,34 @@ const FloatingChatWidget = forwardRef(function FloatingChatWidget(
         return;
       }
 
+      if (response.action === "open_existing_incident") {
+        completedRef.current = true;
+        referenceValidationPendingRef.current = false;
+        const agentMessage = {
+          id: `msg_${Date.now()}`,
+          role: "agent",
+          content: response.message,
+          timestamp: new Date().toISOString(),
+          data: response.data || {},
+          completed: true,
+        };
+        setMessages((prev) => [...prev, agentMessage]);
+        setIsTyping(false);
+        pendingFirstInputRef.current = null;
+
+        setTimeout(() => {
+          navigate(
+            response.data?.redirect ||
+              `/my-reports/${response.data?.incident_id || ""}`,
+          );
+        }, 800);
+        return;
+      }
+
       // Handle no-workflow
       if (response.action === "no_workflow") {
+        completedRef.current = true;
+        referenceValidationPendingRef.current = false;
         const noWorkflowMsg = {
           id: `msg_${Date.now()}`,
           role: "agent",
@@ -541,6 +634,9 @@ const FloatingChatWidget = forwardRef(function FloatingChatWidget(
         };
         setMessages((prev) => [...prev, agentMessage]);
         setIsTyping(false);
+        if (response.completed) {
+          completedRef.current = true;
+        }
       }, 800);
     } else if (response.type === "error") {
       const errorMessage = {
@@ -571,16 +667,105 @@ const FloatingChatWidget = forwardRef(function FloatingChatWidget(
   const buildInitialDataFull = (extra = {}) => ({
     ...extra,
     user_details: effectiveUserDetails,
-    ...(selectedReporterType
+    ...(selectedReferenceId
       ? {
-          reporter_type: selectedReporterType.value,
-          reporter_type_label: selectedReporterType.label,
+          reference_id: selectedReferenceId,
         }
       : {}),
     ...(customerDetails
       ? { reported_by_staff_id: userId, on_behalf: true }
       : {}),
   });
+
+  const sendStartOrResume = (
+    ws,
+    { shouldResume = false, useCase = "", extraInitialData = {} } = {},
+  ) => {
+    const incidentId = incidentIdRef.current || `incident_${Date.now()}`;
+    if (!incidentIdRef.current) {
+      incidentIdRef.current = incidentId;
+    }
+
+    const resolvedUseCase = useCase || activeUseCaseRef.current || "";
+    const initialData = buildInitialDataFull(
+      resolvedUseCase
+        ? { ...extraInitialData, use_case: resolvedUseCase }
+        : extraInitialData,
+    );
+    const payload =
+      shouldResume && hasStartedWorkflowRef.current
+        ? {
+            type: "resume_session",
+            incident_id: incidentId,
+            tenant_id: tenantId,
+            user_id: effectiveUserId,
+            use_case: resolvedUseCase,
+            initial_data: initialData,
+          }
+        : {
+            type: "start",
+            incident_id: incidentId,
+            tenant_id: tenantId,
+            user_id: effectiveUserId,
+            use_case: resolvedUseCase,
+            initial_data: initialData,
+          };
+
+    if (!shouldResume) {
+      hasStartedWorkflowRef.current = true;
+    }
+
+    ws.send(JSON.stringify(payload));
+  };
+
+  const scheduleReconnect = () => {
+    if (manualCloseRef.current || completedRef.current || !incidentStarted) return;
+    reconnectAttemptsRef.current += 1;
+    const delayMs = Math.min(
+      1000 * 2 ** (reconnectAttemptsRef.current - 1),
+      10000,
+    );
+    clearTimeout(reconnectTimerRef.current);
+    reconnectTimerRef.current = setTimeout(() => {
+      startIncident({ reconnect: true });
+    }, delayMs);
+  };
+
+  const attachSocketHandlers = (ws, { reconnect = false } = {}) => {
+    wsRef.current = ws;
+
+    ws.onopen = () => {
+      setIsConnected(true);
+      reconnectAttemptsRef.current = 0;
+      if (reconnect && hasStartedWorkflowRef.current) {
+        sendStartOrResume(ws, { shouldResume: true });
+      } else {
+        promptForReferenceId({ replace: messages.length === 0 });
+      }
+    };
+
+    ws.onmessage = (event) => {
+      const response = JSON.parse(event.data);
+      handleAgentMessage(response);
+    };
+
+    ws.onerror = (event) => {
+      console.error("[FloatingChatWidget][WebSocket] error", event);
+      setIsConnected(false);
+    };
+
+    ws.onclose = (event) => {
+      console.warn("[FloatingChatWidget][WebSocket] closed", {
+        code: event.code,
+        reason: event.reason,
+        wasClean: event.wasClean,
+      });
+      setIsConnected(false);
+      wsRef.current = null;
+      if (manualCloseRef.current || completedRef.current) return;
+      scheduleReconnect();
+    };
+  };
 
   const handleCategorySelect = (useCase, displayName) => {
     if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
@@ -596,17 +781,8 @@ const FloatingChatWidget = forwardRef(function FloatingChatWidget(
     ]);
     setWorkflowStarted(true);
     pendingFirstInputRef.current = displayName;
-
-    wsRef.current.send(
-      JSON.stringify({
-        type: "start",
-        incident_id: `incident_${Date.now()}`,
-        tenant_id: tenantId,
-        user_id: effectiveUserId,
-        use_case: useCase,
-        initial_data: buildInitialDataFull({ use_case: useCase }),
-      }),
-    );
+    activeUseCaseRef.current = useCase;
+    sendStartOrResume(wsRef.current, { useCase });
   };
 
   const handleIncidentOptionClick = (option) => {
@@ -674,10 +850,7 @@ const FloatingChatWidget = forwardRef(function FloatingChatWidget(
               },
             ]);
             setIsTyping(false);
-            addAgentMessage(
-              "Thanks. Now choose the report type to get the right triage flow, or describe the issue in your own words.",
-              { reportTypePrompt: true },
-            );
+            promptForReportType();
           }, 600);
         })
         .catch(() => {
@@ -698,20 +871,41 @@ const FloatingChatWidget = forwardRef(function FloatingChatWidget(
       return;
     }
 
-    if (isReporterSelectionPending) {
+    if (isReferenceIdPending) {
       setInputText("");
-      const matchedReporterType = REPORTER_TYPE_OPTIONS.find(
-        (option) => option.label.toLowerCase() === text.toLowerCase(),
-      );
+      const normalizedReferenceId = normalizeDemoReferenceId(text);
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: `msg_${Date.now()}`,
+          role: "user",
+          content: normalizedReferenceId || text,
+          timestamp: new Date().toISOString(),
+        },
+      ]);
 
-      if (matchedReporterType) {
-        handleReporterTypeSelect(matchedReporterType);
+      if (workflowStarted) {
+        if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+          wsRef.current.send(
+            JSON.stringify({
+              type: "user_input",
+              session_id: sessionId,
+              input: { message: normalizedReferenceId || text },
+            }),
+          );
+        }
+        return;
+      }
+
+      if (normalizedReferenceId) {
+        handleReferenceIdSelect(normalizedReferenceId, {
+          appendUserMessage: false,
+        });
       } else {
         addAgentMessage(
-          "Please choose one of the reporter types shown above to continue.",
+          "Please enter a valid REF ID to continue.",
           {
-            reporterTypePrompt: true,
-            options: REPORTER_TYPE_OPTIONS.map((option) => option.label),
+            refIdPrompt: true,
           },
         );
       }
@@ -732,16 +926,8 @@ const FloatingChatWidget = forwardRef(function FloatingChatWidget(
     if (!workflowStarted) {
       setWorkflowStarted(true);
       pendingFirstInputRef.current = text;
-      wsRef.current.send(
-        JSON.stringify({
-          type: "start",
-          incident_id: `incident_${Date.now()}`,
-          tenant_id: tenantId,
-          user_id: effectiveUserId,
-          use_case: "",
-          initial_data: buildInitialDataFull(),
-        }),
-      );
+      activeUseCaseRef.current = "";
+      sendStartOrResume(wsRef.current, { useCase: "" });
     } else {
       wsRef.current.send(
         JSON.stringify({
@@ -784,7 +970,11 @@ const FloatingChatWidget = forwardRef(function FloatingChatWidget(
           style={styles.chatFab}
           onClick={() => {
             setChatOpen(true);
-            if (!incidentStarted) startIncident();
+            if (!incidentStarted) {
+              startIncident();
+            } else if (!wsRef.current || wsRef.current.readyState > WebSocket.OPEN) {
+              startIncident({ reconnect: true });
+            }
           }}
           onMouseEnter={(e) => {
             e.currentTarget.style.transform = "scale(1.1)";
@@ -827,7 +1017,14 @@ const FloatingChatWidget = forwardRef(function FloatingChatWidget(
                 </div>
                 <button
                   style={styles.closeBtn}
-                  onClick={() => setChatOpen(false)}
+                  onClick={() => {
+                    manualCloseRef.current = true;
+                    clearTimeout(reconnectTimerRef.current);
+                    if (wsRef.current && wsRef.current.readyState <= WebSocket.OPEN) {
+                      wsRef.current.close();
+                    }
+                    setChatOpen(false);
+                  }}
                   onMouseEnter={(e) => {
                     e.currentTarget.style.backgroundColor = "#e2e8f0";
                   }}
@@ -843,13 +1040,11 @@ const FloatingChatWidget = forwardRef(function FloatingChatWidget(
               {incidentStarted
                 ? isCallCenter
                   ? customerDetails
-                    ? selectedReporterType
-                      ? `Customer: ${customerDetails.full_name} · Reporter: ${selectedReporterType.label}`
-                      : `Customer: ${customerDetails.full_name}`
+                    ? `Customer: ${customerDetails.full_name}`
                     : "Enter customer phone to begin"
-                  : selectedReporterType
-                    ? `Reporter: ${selectedReporterType.label}`
-                    : "Select reporter type to begin"
+                  : selectedReferenceId
+                    ? `REF ID: ${selectedReferenceId}`
+                    : "Enter REF ID to begin"
                 : "Ready to assist you"}
             </p>
           </div>
@@ -874,20 +1069,20 @@ const FloatingChatWidget = forwardRef(function FloatingChatWidget(
               </div>
             ) : (
               <>
-                {messages.map((message, index) => (
+                {messages.map((message) => (
                   <React.Fragment key={message.id}>
                     <ChatMessage
                       message={message}
                       onOptionClick={
-                        message.data?.reporterTypePrompt
-                          ? handleReporterTypeSelect
+                        message.data?.refIdPrompt
+                          ? handleReferenceIdSelect
                           : handleIncidentOptionClick
                       }
                     />
                     {message.data?.reportTypePrompt &&
                       message.role === "agent" &&
-                      !isReporterSelectionPending &&
-                      !!selectedReporterType &&
+                      !isReferenceIdPending &&
+                      !!selectedReferenceId &&
                       !workflowStarted &&
                       !phoneCollectionPhase && (
                         <div style={{ marginTop: "0.5rem", maxWidth: "90%" }}>
@@ -1019,8 +1214,8 @@ const FloatingChatWidget = forwardRef(function FloatingChatWidget(
                     placeholder={
                       phoneCollectionPhase
                         ? "Enter customer phone number..."
-                        : isReporterSelectionPending
-                          ? "Choose a reporter type..."
+                        : isReferenceIdPending
+                          ? "Enter REF ID..."
                           : "Type your message..."
                     }
                     disabled={!isConnected || isProcessing}
@@ -1044,8 +1239,8 @@ const FloatingChatWidget = forwardRef(function FloatingChatWidget(
                 <p style={styles.hint}>
                   {isProcessing
                     ? "Processing..."
-                    : isReporterSelectionPending
-                      ? "Choose a reporter type to continue"
+                    : isReferenceIdPending
+                      ? "Enter REF ID to continue"
                       : "Enter to send"}
                 </p>
               </>

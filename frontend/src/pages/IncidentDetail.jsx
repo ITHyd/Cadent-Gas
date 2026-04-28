@@ -1,11 +1,20 @@
 import { useState, useEffect, useRef } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import { MapContainer, TileLayer, Marker, Popup, Polyline, useMap } from 'react-leaflet';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { formatUseCase } from '../utils/formatters';
-import { getIncident, addUserNote, updateUserNote, deleteUserNote, updateSmsPreference } from '../services/api';
-import { useAuth } from '../contexts/AuthContext';
+import { formatIncidentId, formatReferenceId } from '../utils/incidentIds';
+import {
+  getIncident,
+  addUserNote,
+  updateUserNote,
+  deleteUserNote,
+  updateSmsPreference,
+  validateIncident,
+  confirmIncidentValid,
+  markIncidentFalse,
+} from '../services/api';
 
 /* ═══════════════════════════════════════════════════════════════════
    DESIGN TOKENS
@@ -54,6 +63,17 @@ const Card = ({ children, style, hoverable, ...props }) => {
       {children}
     </div>
   );
+};
+
+const formatKbDisplayId = (match, fallback) => {
+  const rawId = String(match?.kb_id || match?.id || '').trim();
+  const normalized = rawId.toLowerCase();
+  const trueMatch = normalized.match(/^(?:co_)?(?:seed_)?true_(\d+)$/);
+  const falseMatch = normalized.match(/^(?:co_)?(?:seed_)?false_(\d+)$/);
+
+  if (trueMatch) return `true_${trueMatch[1].padStart(3, '0')}`;
+  if (falseMatch) return `false_${falseMatch[1].padStart(3, '0')}`;
+  return rawId || fallback;
 };
 
 /* ═══════════════════════════════════════════════════════════════════
@@ -183,7 +203,8 @@ const SkeletonPage = () => (
 const IncidentDetail = () => {
   const { incidentId } = useParams();
   const navigate = useNavigate();
-  const { user } = useAuth();
+  const location = useLocation();
+  const isReporterView = location.pathname.startsWith('/my-reports/');
   const [incident, setIncident] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -207,6 +228,8 @@ const IncidentDetail = () => {
 
   // SMS preference
   const [smsUpdating, setSmsUpdating] = useState(false);
+  const [kbReviewBusy, setKbReviewBusy] = useState('');
+  const [expandedKbMatch, setExpandedKbMatch] = useState(null);
 
   // Toast
   const [toast, setToast] = useState(null);
@@ -232,6 +255,45 @@ const IncidentDetail = () => {
     const interval = setInterval(() => fetchIncidentDetail(true), 30000);
     return () => clearInterval(interval);
   }, [incidentId]);
+
+  const handleKbRevalidate = async () => {
+    try {
+      setKbReviewBusy('validate');
+      await validateIncident(incidentId);
+      await fetchIncidentDetail(true);
+      showToastMsg('KB validation refreshed');
+    } catch (err) {
+      showToastMsg(err.message || 'Failed to re-validate incident', 'error');
+    } finally {
+      setKbReviewBusy('');
+    }
+  };
+
+  const handleKbConfirmValid = async () => {
+    try {
+      setKbReviewBusy('confirm');
+      await confirmIncidentValid(incidentId);
+      await fetchIncidentDetail(true);
+      showToastMsg('Incident marked as true incident');
+    } catch (err) {
+      showToastMsg(err.message || 'Failed to confirm incident', 'error');
+    } finally {
+      setKbReviewBusy('');
+    }
+  };
+
+  const handleKbMarkFalse = async () => {
+    try {
+      setKbReviewBusy('false');
+      await markIncidentFalse(incidentId, 'Marked as false report from incident review');
+      await fetchIncidentDetail(true);
+      showToastMsg('Incident marked as false report');
+    } catch (err) {
+      showToastMsg(err.message || 'Failed to mark incident as false', 'error');
+    } finally {
+      setKbReviewBusy('');
+    }
+  };
 
 
   /* ── Format Helpers ──────────────────────────────────────────── */
@@ -275,8 +337,6 @@ const IncidentDetail = () => {
     emergency_dispatch: 'Emergency Dispatch', schedule_engineer: 'Engineer Scheduled',
     monitor: 'Monitoring', close_with_guidance: 'Closed with Guidance', false_report: 'No Action Required',
   };
-  const outcomeIcons = { emergency_dispatch: '🚨', schedule_engineer: '🔧', monitor: '👁️', close_with_guidance: '✓', false_report: '❌' };
-
   const getStatusColor = (s) => statusColors[s] || '#6b7280';
   const getStatusLabel = (s) => statusLabels[s] || s;
   const getOutcomeLabel = (o) => outcomeLabels[o] || o?.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()) || '';
@@ -419,8 +479,8 @@ const IncidentDetail = () => {
     lines.push('-'.repeat(60));
     lines.push('  INCIDENT REPORT');
     lines.push('-'.repeat(60));
-    lines.push(`  Reference: REF-${shortRef}`);
-    lines.push(`  Incident ID: ${incident.incident_id}`);
+    lines.push(`  Reference: ${shortRef}`);
+    lines.push(`  Incident ID: ${formatIncidentId(incident.incident_id)}`);
     lines.push(`  Generated: ${new Date().toLocaleString('en-GB')}`);
 
     addSection('Incident Overview');
@@ -528,7 +588,7 @@ const IncidentDetail = () => {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `Incident-Report-REF-${shortRef}-${new Date().toISOString().slice(0, 10)}.txt`;
+    a.download = `Incident-Report-${shortRef}-${new Date().toISOString().slice(0, 10)}.txt`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
@@ -545,7 +605,7 @@ const IncidentDetail = () => {
           <div style={{ fontSize: '3.5rem', marginBottom: '16px' }}>⚠️</div>
           <div style={{ fontSize: '1.25rem', fontWeight: '700', color: T.text, marginBottom: '8px' }}>{error || 'Incident not found'}</div>
           <p style={{ fontSize: '1rem', color: T.textMuted, marginBottom: '24px', lineHeight: 1.5 }}>Please try again or go back to your reports.</p>
-          <button onClick={() => navigate('/my-reports')} style={{
+          <button onClick={() => navigate('/my-reports', { replace: true })} style={{
             padding: '10px 24px', background: T.primary, color: 'white', border: 'none',
             borderRadius: T.radiusSm, cursor: 'pointer', fontSize: '0.95rem', fontWeight: '600',
           }}>Back to My Reports</button>
@@ -561,7 +621,7 @@ const IncidentDetail = () => {
   const sla = incident.sla || {};
   const active = isActive(incident.status);
   const incidentType = formatUseCase(incident.incident_type || incident.classified_use_case || 'Incident');
-  const shortRef = incident.incident_id ? incident.incident_id.replace(/^INC_/i, '').toUpperCase() : '';
+  const shortRef = formatReferenceId(incident.incident_id);
   const agent = incident.assigned_agent;
   const statusHistory = incident.status_history || [];
   const statusColor = getStatusColor(incident.status);
@@ -584,7 +644,7 @@ const IncidentDetail = () => {
       }}>
         <div style={{ maxWidth: '1280px', margin: '0 auto', padding: '0 24px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap', minWidth: 0 }}>
-            <button onClick={() => navigate('/my-reports')} style={{
+            <button onClick={() => navigate('/my-reports', { replace: true })} style={{
               background: 'none', border: 'none', cursor: 'pointer', fontSize: '0.95rem',
               color: T.primary, fontWeight: '600', display: 'flex', alignItems: 'center', gap: '4px', padding: '6px 0',
             }}>← My Reports</button>
@@ -593,7 +653,7 @@ const IncidentDetail = () => {
               fontFamily: 'monospace', fontSize: '0.9rem', color: T.primary,
               background: T.primaryLight, padding: '4px 10px', borderRadius: '6px', fontWeight: '600',
               whiteSpace: 'nowrap', overflow: 'visible', flexShrink: 0,
-            }}>REF-{shortRef}</span>
+            }}>{shortRef}</span>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
             {/* Live indicator */}
@@ -800,7 +860,7 @@ const IncidentDetail = () => {
                   <div style={{ padding: '32px', textAlign: 'center' }}>
                     <div style={{ fontSize: '2.5rem', marginBottom: '12px' }}>🔍</div>
                     <div style={{ fontSize: '1.15rem', fontWeight: '700', color: T.text, marginBottom: '6px' }}>Finding an Engineer</div>
-                    <p style={{ fontSize: '0.9rem', color: T.textMuted, margin: '0 0 16px', lineHeight: 1.6 }}>We're matching you with the best available engineer nearby.</p>
+                    <p style={{ fontSize: '0.9rem', color: T.textMuted, margin: '0 0 16px', lineHeight: 1.6 }}>We&apos;re matching you with the best available engineer nearby.</p>
                     <div style={{
                       display: 'inline-flex', alignItems: 'center', gap: '6px',
                       padding: '4px 12px', background: '#edf5fc', borderRadius: T.radiusPill,
@@ -1141,33 +1201,303 @@ const IncidentDetail = () => {
                 <h3 style={{ fontSize: '0.75rem', fontWeight: '700', color: T.textMuted, textTransform: 'uppercase', letterSpacing: '0.06em', margin: '0' }}>Incident Details</h3>
                 {(() => {
                   const kbValidation = incident.structured_data?._kb_validation || incident.kb_validation_details;
-                  if (!kbValidation || !kbValidation.verdict || kbValidation.verdict === 'unknown') return null;
+                  const rawVerdict = (kbValidation?.verdict || kbValidation?.best_match_type || incident.kb_match_type || 'unknown').toString().toLowerCase();
+                  if (!kbValidation && !incident.kb_match_type) return null;
 
-                  const isTrue = kbValidation.verdict === 'true';
-                  const confidence = kbValidation.confidence || 0;
+                  const isTrue = rawVerdict === 'true';
+                  const isFalse = rawVerdict === 'false';
+                  const isAdminConfirmed = rawVerdict === 'admin_confirmed';
+                  const confidence = kbValidation?.confidence ?? incident.kb_similarity_score ?? 0;
                   const percentage = Math.round(confidence * 100);
+                  const trueOverall = Math.round(((((kbValidation?.true_kb_match ?? kbValidation?.true_kb_score) ?? 0) || 0)) * 100);
+                  const falseOverall = Math.round(((((kbValidation?.false_kb_match ?? kbValidation?.false_kb_score) ?? 0) || 0)) * 100);
+                  const reviewerOverride = Boolean(kbValidation?.reviewer_override);
+                  const label = isTrue
+                    ? 'Likely True Incident'
+                    : isFalse
+                      ? 'Likely False Report'
+                      : isAdminConfirmed
+                        ? 'Admin Confirmed'
+                        : 'No strong KB match';
+                  const reviewPrompt = isTrue
+                    ? 'Do you want to mark this as a false report or re-validate it?'
+                    : isFalse
+                      ? 'Do you want to confirm this as a true incident or re-validate it?'
+                      : 'Do you want to review this verdict or run validation again?';
+                  const bg = isReporterView
+                    ? (isTrue ? '#fef2f2' : isFalse ? '#ecfdf5' : '#eff6ff')
+                    : (isTrue ? '#dcfce7' : isFalse ? '#fef3c7' : '#eff6ff');
+                  const color = isReporterView
+                    ? (isTrue ? '#b91c1c' : isFalse ? '#047857' : '#1d4ed8')
+                    : (isTrue ? '#166534' : isFalse ? '#92400e' : '#1d4ed8');
+                  const border = isReporterView
+                    ? (isTrue ? '#fecaca' : isFalse ? '#86efac' : '#bfdbfe')
+                    : (isTrue ? '#86efac' : isFalse ? '#fcd34d' : '#bfdbfe');
 
                   return (
-                    <span style={{
-                      padding: '6px 14px',
-                      borderRadius: '8px',
-                      fontSize: '0.85rem',
-                      fontWeight: '700',
-                      background: isTrue ? '#dcfce7' : '#fef3c7',
-                      color: isTrue ? '#166534' : '#92400e',
-                      border: isTrue ? '1px solid #86efac' : '1px solid #fcd34d',
-                      display: 'inline-flex',
-                      alignItems: 'center',
-                      gap: '6px'
-                    }}>
-                      {isTrue ? 'True Incident' : 'False Report'} - {percentage}%
-                    </span>
+                    <div style={{ display: 'grid', gap: '10px' }}>
+                      <span style={isReporterView ? {
+                        fontSize: '0.92rem',
+                        fontWeight: '700',
+                        color,
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '8px',
+                        width: 'fit-content',
+                      } : {
+                        padding: '6px 14px',
+                        borderRadius: '8px',
+                        fontSize: '0.85rem',
+                        fontWeight: '700',
+                        background: bg,
+                        color,
+                        border: `1px solid ${border}`,
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '6px',
+                        width: 'fit-content'
+                      }}>
+                        {isReporterView && (
+                          <span style={{
+                            width: '10px',
+                            height: '10px',
+                            borderRadius: '50%',
+                            background: color,
+                            display: 'inline-block',
+                            flexShrink: 0,
+                          }} />
+                        )}
+                        {label}{!isReporterView && (kbValidation?.confidence != null || incident.kb_similarity_score != null) ? ` - ${percentage}%` : ''}
+                      </span>
+                      {!isReporterView && (() => {
+                        const trueMatches = kbValidation?.top_true_matches || [];
+                        const falseMatches = kbValidation?.top_false_matches || [];
+                        const canReviewKb = ['new', 'in_progress', 'pending_company_action', 'false_report', 'completed'].includes(incident.status) && !reviewerOverride;
+                        if (!trueMatches.length && !falseMatches.length && !canReviewKb) return null;
+                        return (
+                          <div style={{ display: 'grid', gap: '10px' }}>
+                            <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+                              <div style={{ padding: '7px 12px', borderRadius: '8px', border: '1px solid #bbf7d0', background: '#ecfdf5', color: '#166534', fontSize: '0.8rem', fontWeight: 700 }}>
+                                Overall True Similarity {trueOverall}%
+                              </div>
+                              <div style={{ padding: '7px 12px', borderRadius: '8px', border: '1px solid #fecaca', background: '#fef2f2', color: '#991b1b', fontSize: '0.8rem', fontWeight: 700 }}>
+                                Overall False Similarity {falseOverall}%
+                              </div>
+                            </div>
+                            {trueMatches.length > 0 && (
+                              <details style={{ border: '1px solid #bbf7d0', borderRadius: '10px', background: '#f8fffb', padding: '8px 10px' }}>
+                                <summary style={{ cursor: 'pointer', fontSize: '0.74rem', color: '#166534', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.05em', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px' }}>
+                                  <span>Matched True Records ({trueMatches.length})</span>
+                                  <span style={{ fontSize: '0.9rem', lineHeight: 1 }}>▼</span>
+                                </summary>
+                                <div style={{ display: 'grid', gap: '6px', marginTop: '10px' }}>
+                                  {trueMatches.slice(0, 3).map((match, idx) => {
+                                    const entryKey = `true-${match.kb_id || idx}`;
+                                    const isExpanded = expandedKbMatch === entryKey;
+                                    return (
+                                    <button
+                                      type="button"
+                                      key={entryKey}
+                                      onClick={() => setExpandedKbMatch(isExpanded ? null : entryKey)}
+                                      style={{ padding: '8px 10px', borderRadius: '8px', border: '1px solid #bbf7d0', background: '#f0fdf4', textAlign: 'left', width: '100%', cursor: 'pointer' }}
+                                    >
+                                      <div style={{ display: 'flex', justifyContent: 'space-between', gap: '8px' }}>
+                                        <strong style={{ fontSize: '0.8rem', color: '#166534' }}>{formatKbDisplayId(match, match.incident_type || 'True incident')}</strong>
+                                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: '8px' }}>
+                                          <span style={{ fontSize: '0.75rem', color: '#047857', fontWeight: 700 }}>{Math.round((match.score || 0) * 100)}%</span>
+                                          <span style={{ fontSize: '0.8rem', color: '#166534' }}>{isExpanded ? '▲' : '▼'}</span>
+                                        </span>
+                                      </div>
+                                      {match.description && <div style={{ fontSize: '0.76rem', color: T.textMuted, marginTop: '3px' }}>{match.description}</div>}
+                                      {isExpanded && (
+                                        <div style={{ marginTop: '8px', paddingTop: '8px', borderTop: '1px solid #bbf7d0', display: 'grid', gap: '6px' }}>
+                                          {match.resolution_summary && (
+                                            <div style={{ fontSize: '0.74rem', color: T.textMuted }}>
+                                              <strong style={{ color: '#166534' }}>Summary:</strong> {match.resolution_summary}
+                                            </div>
+                                          )}
+                                          {Array.isArray(match.matched_tags) && match.matched_tags.length > 0 && (
+                                            <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+                                              {match.matched_tags.map((tag) => (
+                                                <span key={tag} style={{ fontSize: '0.7rem', padding: '2px 8px', borderRadius: '999px', background: '#dcfce7', color: '#166534', fontWeight: 700 }}>
+                                                  {String(tag).replace(/_/g, ' ')}
+                                                </span>
+                                              ))}
+                                            </div>
+                                          )}
+                                          {match.manufacturer && (
+                                            <div style={{ fontSize: '0.74rem', color: T.textMuted }}>
+                                              <strong style={{ color: '#166534' }}>Manufacturer:</strong> {match.manufacturer}
+                                            </div>
+                                          )}
+                                          {match.model && (
+                                            <div style={{ fontSize: '0.74rem', color: T.textMuted }}>
+                                              <strong style={{ color: '#166534' }}>Model:</strong> {match.model}
+                                            </div>
+                                          )}
+                                          {match.pattern_fields && Object.keys(match.pattern_fields).length > 0 && (
+                                            <div style={{ display: 'grid', gap: '4px' }}>
+                                              {Object.entries(match.pattern_fields).map(([field, value]) => (
+                                                <div key={field} style={{ fontSize: '0.73rem', color: T.textMuted }}>
+                                                  <strong style={{ color: '#166534' }}>{field.replace(/_/g, ' ')}:</strong> {String(value)}
+                                                </div>
+                                              ))}
+                                            </div>
+                                          )}
+                                        </div>
+                                      )}
+                                    </button>
+                                  )})}
+                                </div>
+                              </details>
+                            )}
+                            {falseMatches.length > 0 && (
+                              <details style={{ border: '1px solid #fecaca', borderRadius: '10px', background: '#fffafa', padding: '8px 10px' }}>
+                                <summary style={{ cursor: 'pointer', fontSize: '0.74rem', color: '#991b1b', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.05em', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px' }}>
+                                  <span>Matched False Records ({falseMatches.length})</span>
+                                  <span style={{ fontSize: '0.9rem', lineHeight: 1 }}>▼</span>
+                                </summary>
+                                <div style={{ display: 'grid', gap: '6px', marginTop: '10px' }}>
+                                  {falseMatches.slice(0, 3).map((match, idx) => {
+                                    const entryKey = `false-${match.kb_id || idx}`;
+                                    const isExpanded = expandedKbMatch === entryKey;
+                                    return (
+                                    <button
+                                      type="button"
+                                      key={entryKey}
+                                      onClick={() => setExpandedKbMatch(isExpanded ? null : entryKey)}
+                                      style={{ padding: '8px 10px', borderRadius: '8px', border: '1px solid #fecaca', background: '#fef2f2', textAlign: 'left', width: '100%', cursor: 'pointer' }}
+                                    >
+                                      <div style={{ display: 'flex', justifyContent: 'space-between', gap: '8px' }}>
+                                        <strong style={{ fontSize: '0.8rem', color: '#991b1b' }}>{formatKbDisplayId(match, match.incident_type || 'False report')}</strong>
+                                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: '8px' }}>
+                                          <span style={{ fontSize: '0.75rem', color: '#b91c1c', fontWeight: 700 }}>{Math.round((match.score || 0) * 100)}%</span>
+                                          <span style={{ fontSize: '0.8rem', color: '#991b1b' }}>{isExpanded ? '▲' : '▼'}</span>
+                                        </span>
+                                      </div>
+                                      {match.description && <div style={{ fontSize: '0.76rem', color: T.textMuted, marginTop: '3px' }}>{match.description}</div>}
+                                      {isExpanded && (
+                                        <div style={{ marginTop: '8px', paddingTop: '8px', borderTop: '1px solid #fecaca', display: 'grid', gap: '6px' }}>
+                                          {match.resolution_summary && (
+                                            <div style={{ fontSize: '0.74rem', color: T.textMuted }}>
+                                              <strong style={{ color: '#991b1b' }}>Summary:</strong> {match.resolution_summary}
+                                            </div>
+                                          )}
+                                          {Array.isArray(match.matched_tags) && match.matched_tags.length > 0 && (
+                                            <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+                                              {match.matched_tags.map((tag) => (
+                                                <span key={tag} style={{ fontSize: '0.7rem', padding: '2px 8px', borderRadius: '999px', background: '#fee2e2', color: '#991b1b', fontWeight: 700 }}>
+                                                  {String(tag).replace(/_/g, ' ')}
+                                                </span>
+                                              ))}
+                                            </div>
+                                          )}
+                                          {match.manufacturer && (
+                                            <div style={{ fontSize: '0.74rem', color: T.textMuted }}>
+                                              <strong style={{ color: '#991b1b' }}>Manufacturer:</strong> {match.manufacturer}
+                                            </div>
+                                          )}
+                                          {match.model && (
+                                            <div style={{ fontSize: '0.74rem', color: T.textMuted }}>
+                                              <strong style={{ color: '#991b1b' }}>Model:</strong> {match.model}
+                                            </div>
+                                          )}
+                                          {match.pattern_fields && Object.keys(match.pattern_fields).length > 0 && (
+                                            <div style={{ display: 'grid', gap: '4px' }}>
+                                              {Object.entries(match.pattern_fields).map(([field, value]) => (
+                                                <div key={field} style={{ fontSize: '0.73rem', color: T.textMuted }}>
+                                                  <strong style={{ color: '#991b1b' }}>{field.replace(/_/g, ' ')}:</strong> {String(value)}
+                                                </div>
+                                              ))}
+                                            </div>
+                                          )}
+                                        </div>
+                                      )}
+                                    </button>
+                                  )})}
+                                </div>
+                              </details>
+                            )}
+                            {canReviewKb && (
+                              <div style={{ display: 'grid', gap: '8px' }}>
+                                <div style={{ fontSize: '0.8rem', color: T.textMuted }}>
+                                  {reviewPrompt}
+                                </div>
+                                <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                                {!isTrue && (
+                                  <button
+                                    type="button"
+                                    onClick={handleKbConfirmValid}
+                                    disabled={Boolean(kbReviewBusy)}
+                                    style={{
+                                      minHeight: '34px',
+                                      padding: '7px 12px',
+                                      borderRadius: '8px',
+                                      border: '1px solid #86efac',
+                                      background: '#ecfdf5',
+                                      color: '#047857',
+                                      fontSize: '0.78rem',
+                                      fontWeight: '700',
+                                      cursor: kbReviewBusy ? 'not-allowed' : 'pointer',
+                                      opacity: kbReviewBusy && kbReviewBusy !== 'confirm' ? 0.65 : 1,
+                                    }}
+                                  >
+                                    Confirm True Incident
+                                  </button>
+                                )}
+                                {!isFalse && (
+                                  <button
+                                    type="button"
+                                    onClick={handleKbMarkFalse}
+                                    disabled={Boolean(kbReviewBusy)}
+                                    style={{
+                                      minHeight: '34px',
+                                      padding: '7px 12px',
+                                      borderRadius: '8px',
+                                      border: '1px solid #fca5a5',
+                                      background: '#fef2f2',
+                                      color: '#b91c1c',
+                                      fontSize: '0.78rem',
+                                      fontWeight: '700',
+                                      cursor: kbReviewBusy ? 'not-allowed' : 'pointer',
+                                      opacity: kbReviewBusy && kbReviewBusy !== 'false' ? 0.65 : 1,
+                                    }}
+                                  >
+                                    Mark False Report
+                                  </button>
+                                )}
+                                <button
+                                  type="button"
+                                  onClick={handleKbRevalidate}
+                                  disabled={Boolean(kbReviewBusy)}
+                                  style={{
+                                    minHeight: '34px',
+                                    padding: '7px 12px',
+                                    borderRadius: '8px',
+                                    border: '1px solid #bfdbfe',
+                                    background: '#eff6ff',
+                                    color: '#1d4ed8',
+                                    fontSize: '0.78rem',
+                                    fontWeight: '700',
+                                    cursor: kbReviewBusy ? 'not-allowed' : 'pointer',
+                                    opacity: kbReviewBusy && kbReviewBusy !== 'validate' ? 0.65 : 1,
+                                  }}
+                                  >
+                                    Re-validate
+                                  </button>
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })()}
+                    </div>
                   );
                 })()}
               </div>
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0' }}>
                 {[
-                  { label: 'Reference', value: `REF-${shortRef}`, mono: true, fullWidth: false },
+                  { label: 'Reference', value: shortRef, mono: true, fullWidth: false },
                   { label: 'Type', value: incidentType },
                   { label: 'Status', value: getStatusLabel(incident.status) },
                   { label: 'Outcome', value: getOutcomeLabel(incident.outcome) || 'Pending' },

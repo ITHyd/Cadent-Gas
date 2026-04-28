@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
+import { formatIncidentId, formatReferenceId } from "../utils/incidentIds";
 
 const ChatMessage = ({ message, onOptionClick }) => {
   const navigate = useNavigate();
@@ -31,34 +32,40 @@ const ChatMessage = ({ message, onOptionClick }) => {
     });
   };
 
-  // Linkify INC_XXXX patterns into clickable links
+  // Linkify incident IDs into clickable links
   const linkifyIncidentIds = (text, lineKey) => {
-    const incRegex = /(INC_[A-Z0-9]+)/g;
-    if (!incRegex.test(text)) return text;
+    if (!isAgent) return text;
+
+    const incidentRefRegex = /\b(?:INC|REF)[-_][A-Z0-9]+\b/g;
+    if (!incidentRefRegex.test(text)) return text;
 
     const parts = [];
     let lastIndex = 0;
     let match;
-    incRegex.lastIndex = 0;
-    while ((match = incRegex.exec(text)) !== null) {
+    incidentRefRegex.lastIndex = 0;
+    while ((match = incidentRefRegex.exec(text)) !== null) {
       if (match.index > lastIndex) parts.push(text.slice(lastIndex, match.index));
-      const incId = match[1];
+      const rawId = match[0].toUpperCase();
+      const routeIncidentId = formatIncidentId(rawId);
+      const displayId = rawId.startsWith("REF")
+        ? formatReferenceId(rawId)
+        : formatIncidentId(rawId);
       parts.push(
         <span
           key={`${lineKey}-inc-${match.index}`}
-          onClick={() => navigate(`/my-reports/${incId}`)}
+          onClick={() => navigate(`/my-reports/${routeIncidentId}`)}
           style={{
-            color: isAgent ? '#2563eb' : '#93c5fd',
-            fontWeight: '700',
-            cursor: 'pointer',
-            textDecoration: 'underline',
-            textUnderlineOffset: '2px',
+            color: "#2563eb",
+            fontWeight: "700",
+            cursor: "pointer",
+            textDecoration: "underline",
+            textUnderlineOffset: "2px",
           }}
         >
-          {incId}
+          {displayId}
         </span>
       );
-      lastIndex = incRegex.lastIndex;
+      lastIndex = incidentRefRegex.lastIndex;
     }
     if (lastIndex < text.length) parts.push(text.slice(lastIndex));
     return parts;

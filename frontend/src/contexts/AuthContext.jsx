@@ -85,7 +85,18 @@ export const AuthProvider = ({ children }) => {
       }
     };
     validate();
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    const handleAuthExpired = () => {
+      clearAuth();
+    };
+
+    window.addEventListener('auth-expired', handleAuthExpired);
+    return () => {
+      window.removeEventListener('auth-expired', handleAuthExpired);
+    };
+  }, [clearAuth]);
 
   const login = useCallback((tokenData) => {
     localStorage.setItem('access_token', tokenData.access_token);

@@ -9,7 +9,6 @@ services:
       MONGO_INITDB_ROOT_PASSWORD: ${MONGO_ROOT_PASSWORD:-mongopass}
     volumes:
       - mongo_data:/data/db
-    # No ports exposed — mongo is only reachable inside the Docker network
     healthcheck:
       test: ["CMD", "mongosh", "--username", "${MONGO_ROOT_USER:-mongoadmin}", "--password", "${MONGO_ROOT_PASSWORD:-mongopass}", "--authenticationDatabase", "admin", "--eval", "db.adminCommand('ping')"]
       interval: 10s
@@ -28,7 +27,7 @@ services:
     volumes:
       - uploads_data:/app/uploads
     ports:
-      - "5020:5020"
+      - "4445:5020"
     depends_on:
       mongo:
         condition: service_healthy
@@ -42,7 +41,21 @@ services:
         VITE_WS_URL: ""
     restart: unless-stopped
     ports:
-      - "5021:80"
+      - "4444:80"
+    depends_on:
+      - backend
+
+  slack_bot:
+    build:
+      context: ./slack_bot
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    env_file:
+      - .env.docker
+    environment:
+      BACKEND_BASE_URL: http://backend:5020
+    ports:
+      - "8090:8090"
     depends_on:
       - backend
 

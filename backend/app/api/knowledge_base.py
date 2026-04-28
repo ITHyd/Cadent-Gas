@@ -10,15 +10,10 @@ from app.services.agent_orchestrator import AgentOrchestrator
 router = APIRouter()
 require_kb_admin = require_role(UserRole.COMPANY, UserRole.SUPER_USER, UserRole.ADMIN)
 
-# Shared orchestrator instance
-_orchestrator = None
-
 def get_orchestrator() -> AgentOrchestrator:
-    """Get or create orchestrator instance"""
-    global _orchestrator
-    if _orchestrator is None:
-        _orchestrator = AgentOrchestrator()
-    return _orchestrator
+    """Get shared orchestrator instance from agents module."""
+    from app.api.agents import agent_orchestrator
+    return agent_orchestrator
 
 
 def _resolve_tenant_scope(current_user: Dict[str, Any], tenant_id: Optional[str]) -> Optional[str]:

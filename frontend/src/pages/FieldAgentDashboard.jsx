@@ -4,6 +4,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { getAgentIncidents, updateAgentStatus } from '../services/api';
 import ProfileDropdown from '../components/ProfileDropdown';
 import NotificationBell from '../components/NotificationBell';
+import { formatIncidentId } from '../utils/incidentIds';
 import { MapContainer, TileLayer, Marker, Popup } from 'react-leaflet';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
@@ -302,7 +303,7 @@ const FieldAgentDashboard = () => {
               {mappedIncidents.map((inc) => (
                 <Marker key={inc.incident_id} position={inc._coords}>
                   <Popup>
-                    <strong>{inc.incident_id}</strong><br />
+                    <strong>{formatIncidentId(inc.incident_id)}</strong><br />
                     {(inc.classified_use_case || inc.incident_type || 'Incident').replaceAll('_', ' ')}<br />
                     <span style={{ fontSize: '0.8em', color: '#64748b' }}>{inc.user_address || inc.location || ''}</span>
                   </Popup>
@@ -367,7 +368,7 @@ const FieldAgentDashboard = () => {
                   >
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                        <h3 style={{ margin: 0, fontSize: '1rem', color: '#11263c' }}>{incident.incident_id}</h3>
+                        <h3 style={{ margin: 0, fontSize: '1rem', color: '#11263c' }}>{formatIncidentId(incident.incident_id)}</h3>
                         {roleMeta && (
                           <span
                             style={{

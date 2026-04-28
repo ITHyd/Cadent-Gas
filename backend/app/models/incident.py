@@ -97,6 +97,7 @@ class Incident(BaseModel):
     user_name: Optional[str] = None
     user_phone: Optional[str] = None
     user_address: Optional[str] = None
+    reference_id: Optional[str] = None
     reported_by_staff_id: Optional[str] = None  # Admin who reported on behalf of customer
 
     # Incident details
@@ -117,6 +118,7 @@ class Incident(BaseModel):
     kb_similarity_score: Optional[float] = None
     kb_match_type: Optional[str] = None  # "true" | "false" | "unknown"
     kb_validation_details: Optional[Dict[str, Any]] = None  # Full KB verification result
+    incident_pattern: Optional[Dict[str, Any]] = None  # Normalized workflow-answer pattern for KB matching
     
     # Workflow
     workflow_execution_id: Optional[str] = None

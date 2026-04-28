@@ -2,6 +2,7 @@
 import { useNavigate } from 'react-router-dom';
 import { getUserIncidents } from '../services/api';
 import { useAuth } from '../contexts/AuthContext';
+import { formatReferenceId } from '../utils/incidentIds';
 import CustomSelect from '../components/CustomSelect';
 import ProfileDropdown from '../components/ProfileDropdown';
 import NotificationBell from '../components/NotificationBell';
@@ -462,7 +463,7 @@ const MyReports = () => {
                           />
                         )}
                         <span style={{ fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', fontWeight: 700, fontSize: '0.82rem', color: '#37526c' }}>
-                          REF-{incident.incident_id?.replace(/^INC_/i, '').toUpperCase()}
+                          {formatReferenceId(incident.incident_id)}
                         </span>
                       </div>
 

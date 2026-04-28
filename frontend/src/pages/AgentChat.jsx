@@ -4,6 +4,7 @@ import { connectWebSocket } from "../services/websocket";
 import ChatMessage from "../components/ChatMessage";
 import QuestionInput from "../components/QuestionInput";
 import WorkflowVisualization from "../components/WorkflowVisualization";
+import { normalizeDemoReferenceId } from "../constants/referenceIds";
 import { useAuth } from "../contexts/AuthContext";
 import ProfileDropdown from "../components/ProfileDropdown";
 
@@ -12,7 +13,7 @@ const AgentChat = () => {
   const { incidentId } = useParams();
   const location = useLocation();
   const navigate = useNavigate();
-  const { useCase, geoLocation, locationText } = location.state || {};
+  const { useCase, geoLocation, locationText, description } = location.state || {};
 
   const [messages, setMessages] = useState([]);
   const [currentAction, setCurrentAction] = useState(null);
@@ -23,58 +24,129 @@ const AgentChat = () => {
 
   const wsRef = useRef(null);
   const messagesEndRef = useRef(null);
+  const reconnectTimerRef = useRef(null);
+  const reconnectAttemptsRef = useRef(0);
+  const manualCloseRef = useRef(false);
+  const hasStartedRef = useRef(false);
+  const isCompleteRef = useRef(false);
 
   useEffect(() => {
-    const newSessionId = `session_${Date.now()}`;
-    setSessionId(newSessionId);
+    isCompleteRef.current = isComplete;
+  }, [isComplete]);
 
-    const ws = connectWebSocket(newSessionId);
-    wsRef.current = ws;
+  useEffect(() => {
+    let isCancelled = false;
+    const buildInitialData = () => ({
+      incident_id: incidentId,
+      description: description || null,
+      location: locationText || null,
+      geo_location: geoLocation || null,
+      user_details: {
+        name: user?.full_name || null,
+        phone: user?.phone || null,
+        address: locationText || null,
+      },
+    });
 
-    ws.onopen = () => {
-      setIsConnected(true);
-      ws.send(
-        JSON.stringify({
-          type: "start",
-          incident_id: incidentId,
-          tenant_id: user?.tenant_id,
-          user_id: user?.user_id,
-          use_case: useCase,
-          initial_data: {
-            incident_id: incidentId,
-            location: locationText || null,
-            geo_location: geoLocation || null,
-            user_details: {
-              name: user?.full_name || null,
-              phone: user?.phone || null,
-              address: locationText || null,
-            },
-          },
-        }),
-      );
+    const scheduleReconnect = () => {
+      if (isCancelled || manualCloseRef.current || isCompleteRef.current) return;
+      reconnectAttemptsRef.current += 1;
+      const delayMs = Math.min(1000 * 2 ** (reconnectAttemptsRef.current - 1), 10000);
+      clearTimeout(reconnectTimerRef.current);
+      reconnectTimerRef.current = setTimeout(() => {
+        connectSocket(true);
+      }, delayMs);
     };
 
-    ws.onmessage = (event) => {
+    const attachSocketHandlers = (ws, shouldResume) => {
+      wsRef.current = ws;
+
+      ws.onopen = () => {
+        setIsConnected(true);
+        reconnectAttemptsRef.current = 0;
+        const payload = shouldResume && hasStartedRef.current
+          ? {
+              type: "resume_session",
+              incident_id: incidentId,
+              tenant_id: user?.tenant_id,
+              user_id: user?.user_id,
+              use_case: useCase,
+              initial_data: buildInitialData(),
+            }
+          : {
+              type: "start",
+              incident_id: incidentId,
+              tenant_id: user?.tenant_id,
+              user_id: user?.user_id,
+              use_case: useCase,
+              initial_data: buildInitialData(),
+            };
+
+        hasStartedRef.current = true;
+        ws.send(JSON.stringify(payload));
+      };
+
+      ws.onmessage = (event) => {
+        try {
+          const response = JSON.parse(event.data);
+          handleAgentMessage(response);
+        } catch {
+          setIsTyping(false);
+        }
+      };
+
+      ws.onerror = (event) => {
+        console.error("[AgentChat][WebSocket] error", event);
+      };
+
+      ws.onclose = (event) => {
+        console.warn("[AgentChat][WebSocket] closed", {
+          code: event.code,
+          reason: event.reason,
+          wasClean: event.wasClean,
+        });
+        setIsConnected(false);
+        wsRef.current = null;
+        if (manualCloseRef.current || isCancelled || isCompleteRef.current) return;
+        scheduleReconnect();
+      };
+    };
+
+    const connectSocket = async (shouldResume = false) => {
+      const transportSessionId = `session_${Date.now()}`;
       try {
-        const response = JSON.parse(event.data);
-        handleAgentMessage(response);
-      } catch {}
+        setSessionId(transportSessionId);
+        const ws = await connectWebSocket(transportSessionId);
+        if (isCancelled) {
+          if (ws.readyState <= WebSocket.OPEN) {
+            ws.close();
+          }
+          return;
+        }
+        attachSocketHandlers(ws, shouldResume);
+      } catch (error) {
+        if (isCancelled) return;
+        setIsConnected(false);
+        console.error("[AgentChat][WebSocket] connect failed", error);
+        scheduleReconnect();
+      }
     };
 
-    ws.onerror = () => {};
-
-    ws.onclose = () => {
-      setIsConnected(false);
-    };
+    manualCloseRef.current = false;
+    connectSocket(false);
 
     return () => {
-      if (ws && ws.readyState <= WebSocket.OPEN) {
-        ws.close();
+      isCancelled = true;
+      manualCloseRef.current = true;
+      clearTimeout(reconnectTimerRef.current);
+      if (wsRef.current && wsRef.current.readyState <= WebSocket.OPEN) {
+        wsRef.current.close();
       }
     };
   }, [
     incidentId,
     useCase,
+    description,
     locationText,
     geoLocation,
     user?.full_name,
@@ -92,7 +164,27 @@ const AgentChat = () => {
     }
 
     if (response.type === "agent_message") {
+      if (response.session_id && response.session_id !== sessionId) {
+        setSessionId(response.session_id);
+      }
       setIsTyping(false);
+      if (response.action === "open_existing_incident") {
+        const agentMessage = {
+          id: `msg_${Date.now()}`,
+          role: "agent",
+          content: response.message,
+          timestamp: new Date().toISOString(),
+          data: response.data,
+        };
+        setMessages((prev) => [...prev, agentMessage]);
+        setIsComplete(true);
+
+        setTimeout(() => {
+          navigate(response.data?.redirect || `/my-reports/${response.data?.incident_id}`);
+        }, 800);
+        return;
+      }
+
       // Handle no-workflow redirect to manual report form
       if (response.action === "no_workflow") {
         const agentMessage = {
@@ -143,6 +235,7 @@ const AgentChat = () => {
     }
 
     if (response.type === "error") {
+      setIsTyping(false);
     }
   };
 
@@ -181,10 +274,37 @@ const AgentChat = () => {
       return;
     }
 
+    let outgoingInput = input;
+    let displayContent =
+      typeof input === "string"
+        ? input
+        : input?.message || input?.text || JSON.stringify(input);
+
+    if (currentAction?.action === "reference_id_prompt") {
+      const rawReferenceValue =
+        typeof input === "string" ? input : input?.message || input?.text || "";
+      const normalizedReferenceValue = normalizeDemoReferenceId(rawReferenceValue);
+
+      if (normalizedReferenceValue) {
+        displayContent = normalizedReferenceValue;
+        if (typeof input === "string") {
+          outgoingInput = { message: normalizedReferenceValue };
+        } else if (input?.message !== undefined) {
+          outgoingInput = { ...input, message: normalizedReferenceValue };
+        } else if (input?.text !== undefined) {
+          outgoingInput = { ...input, text: normalizedReferenceValue };
+        } else {
+          outgoingInput = { message: normalizedReferenceValue };
+        }
+      } else {
+        displayContent = rawReferenceValue;
+      }
+    }
+
     const userMessage = {
       id: `msg_${Date.now()}`,
       role: "user",
-      content: typeof input === "string" ? input : JSON.stringify(input),
+      content: displayContent,
       timestamp: new Date().toISOString(),
     };
 
@@ -194,7 +314,7 @@ const AgentChat = () => {
       JSON.stringify({
         type: "user_input",
         session_id: sessionId,
-        input,
+        input: outgoingInput,
       }),
     );
 
@@ -205,6 +325,36 @@ const AgentChat = () => {
     // Send the selected option as user input
     sendUserInput({ message: option });
   };
+
+  const getQuestionInputData = () => {
+    if (!currentAction) return null;
+
+    if (currentAction.action === "question") {
+      return currentAction.data;
+    }
+
+    if (currentAction.action === "reference_id_prompt") {
+      return {
+        question_type: "text",
+        question_text: "REF ID",
+        required: true,
+        placeholder: "Enter REF ID",
+      };
+    }
+
+    if (currentAction.action === "awaiting_incident_report") {
+      return {
+        question_type: "text",
+        question_text: "Incident description",
+        required: true,
+        placeholder: "Describe the gas-related issue",
+      };
+    }
+
+    return null;
+  };
+
+  const questionInputData = getQuestionInputData();
 
   return (
     <main className="page-container max-w-[1500px]">
@@ -509,7 +659,10 @@ const AgentChat = () => {
               })()}
 
             {/* Show common examples after first agent message, before user responds */}
-            {messages.length === 1 && messages[0].role === "agent" && (
+            {messages.length === 1 &&
+              messages[0].role === "agent" &&
+              !messages[0].data?.refIdPrompt &&
+              currentAction?.action !== "reference_id_exists" && (
               <div className="rounded-2xl border border-slate-200 bg-white/70 p-6">
                 <h4 className="mb-4 text-sm font-semibold text-slate-700">
                   💡 Common Issues - Click to Start:
@@ -581,9 +734,9 @@ const AgentChat = () => {
 
           {!isComplete && currentAction && (
             <div className="border-t border-slate-200 bg-white/70 px-5 py-4 md:px-6">
-              {currentAction.action === "question" && (
+              {questionInputData && (
                 <QuestionInput
-                  questionData={currentAction.data}
+                  questionData={questionInputData}
                   onSubmit={sendUserInput}
                 />
               )}

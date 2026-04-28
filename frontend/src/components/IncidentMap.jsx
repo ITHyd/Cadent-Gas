@@ -9,6 +9,7 @@ import {
 } from "react-leaflet";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
+import { formatIncidentId } from "../utils/incidentIds";
 
 // Fix default Leaflet icon paths.
 delete L.Icon.Default.prototype._getIconUrl;
@@ -242,7 +243,7 @@ const IncidentMap = ({
                       marginBottom: "4px",
                     }}
                   >
-                    <strong>ID:</strong> {incident.incident_id}
+                    <strong>ID:</strong> {formatIncidentId(incident.incident_id)}
                   </div>
 
                   <div

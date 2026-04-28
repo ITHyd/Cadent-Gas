@@ -12,7 +12,6 @@ import {
   getCompanyOpsRequests,
   getCompanyStats,
   getIncident,
-  getKBStats,
   getFalseIncidentsKB,
   getTenantWorkflows,
   getTrueIncidentsKB,
@@ -22,6 +21,7 @@ import {
   updateItemRequest,
   validateIncident,
 } from '../services/api';
+import { formatIncidentId } from '../utils/incidentIds';
 import { useAuth } from '../contexts/AuthContext';
 import ProfileDropdown from '../components/ProfileDropdown';
 import NotificationBell from '../components/NotificationBell';
@@ -44,8 +44,6 @@ const FILTER_TO_STATUS = {
   completed: 'completed',
   all: null,
 };
-
-const PRIORITY_ORDER = { CRITICAL: 0, HIGH: 1, MEDIUM: 2, NORMAL: 3, LOW: 4 };
 
 const paginationBtnStyle = {
   border: '1px solid #cbd5e1',
@@ -95,6 +93,17 @@ const SlaIndicator = ({ deadline, slaStatus }) => {
   );
 };
 
+const formatKbDisplayId = (match, fallback) => {
+  const rawId = String(match?.kb_id || match?.id || '').trim();
+  const normalized = rawId.toLowerCase();
+  const trueMatch = normalized.match(/^(?:co_)?(?:seed_)?true_(\d+)$/);
+  const falseMatch = normalized.match(/^(?:co_)?(?:seed_)?false_(\d+)$/);
+
+  if (trueMatch) return `true_${trueMatch[1].padStart(3, '0')}`;
+  if (falseMatch) return `false_${falseMatch[1].padStart(3, '0')}`;
+  return rawId || fallback;
+};
+
 const AdminDashboard = () => {
   const { user } = useAuth();
   const tenantId = user?.tenant_id;
@@ -102,7 +111,6 @@ const AdminDashboard = () => {
   const [incidents, setIncidents] = useState([]);
   const [allIncidents, setAllIncidents] = useState([]);
   const [stats, setStats] = useState(null);
-  const [kbStats, setKbStats] = useState(null);
   const [kbTrueEntries, setKbTrueEntries] = useState([]);
   const [kbFalseEntries, setKbFalseEntries] = useState([]);
   const [tenantWorkflows, setTenantWorkflows] = useState([]);
@@ -153,6 +161,7 @@ const AdminDashboard = () => {
   const [detailLoading, setDetailLoading] = useState(false);
   const [selectedOutcomeDrilldown, setSelectedOutcomeDrilldown] = useState(null);
   const [expandedKbEntry, setExpandedKbEntry] = useState(null);
+  const [kbReviewBusy, setKbReviewBusy] = useState('');
 
   const [toast, setToast] = useState(null);
 
@@ -164,13 +173,14 @@ const AdminDashboard = () => {
   // Auto-refresh ops data every 30s
   useEffect(() => {
     if (mainTab !== 'operations') return undefined;
-    const timer = setInterval(() => fetchData(), 30000);
+    const timer = setInterval(() => fetchData({ background: true }), 30000);
     return () => clearInterval(timer);
   }, [mainTab, tenantId]);
 
-  const fetchData = async () => {
+  const fetchData = async (options = {}) => {
+    const { background = false } = options;
     try {
-      setLoading(true);
+      if (!background) setLoading(true);
 
       const status = FILTER_TO_STATUS[filter];
 
@@ -182,7 +192,6 @@ const AdminDashboard = () => {
         allAgentsData,
         opsData,
         workflowData,
-        kbData,
         trueKbData,
         falseKbData,
       ] = await Promise.all([
@@ -193,7 +202,6 @@ const AdminDashboard = () => {
         getAllAgents().catch(() => ({ agents: [] })),
         getCompanyOpsRequests(tenantId).catch(() => ({ assistance_requests: [], item_requests: [] })),
         getTenantWorkflows(tenantId).catch(() => []),
-        getKBStats(tenantId).catch(() => null),
         getTrueIncidentsKB(1, 500, tenantId).catch(() => ({ items: [] })),
         getFalseIncidentsKB(1, 500, tenantId).catch(() => ({ items: [] })),
       ]);
@@ -201,7 +209,6 @@ const AdminDashboard = () => {
       setIncidents(incidentsData.incidents || []);
       setAllIncidents(allIncidentsData.incidents || []);
       setStats(statsData || null);
-      setKbStats(kbData || { total_true: 0, total_false: 0 });
       setKbTrueEntries(trueKbData.items || []);
       setKbFalseEntries(falseKbData.items || []);
       setTenantWorkflows(Array.isArray(workflowData) ? workflowData : workflowData?.workflows || []);
@@ -221,7 +228,7 @@ const AdminDashboard = () => {
     } catch {
       showToast('Failed to load dashboard data', 'error');
     } finally {
-      setLoading(false);
+      if (!background) setLoading(false);
     }
   };
 
@@ -241,7 +248,7 @@ const AdminDashboard = () => {
       showToast('Agent dispatched successfully');
       setAssigningAgentIncidentId(null);
       setSelectedAgentId('');
-      fetchData();
+      fetchData({ background: true });
     } catch {
       showToast('Failed to assign agent', 'error');
     }
@@ -270,7 +277,7 @@ const AdminDashboard = () => {
       showToast('Incident marked as resolved');
       setResolvingIncidentId(null);
       setResolutionNotes('');
-      fetchData();
+      fetchData({ background: true });
     } catch {
       showToast('Failed to resolve incident', 'error');
     }
@@ -294,52 +301,63 @@ const AdminDashboard = () => {
       setApprovingIncidentId(null);
       setApprovingIncident(null);
       setApprovalNotes('');
-      fetchData();
+      fetchData({ background: true });
     } catch {
       showToast('Failed to approve resolution', 'error');
     }
   };
 
-  const handleValidate = async (incidentId) => {
+  const handleValidate = async (incidentId, options = {}) => {
+    const { silent = false, keepModalOpen = false } = options;
     try {
-      const result = await validateIncident(incidentId);
-      await fetchData();
-      // After validation, open the detail modal so admin can review results
-      const refreshed = incidents.find((i) => i.incident_id === incidentId);
-      if (refreshed) {
-        setDetailIncident({ ...refreshed, kb_validation_details: result.validation });
-      } else {
-        // Fallback: try fetching individually
-        try {
-          const fresh = await getIncident(incidentId);
+      setKbReviewBusy('validate');
+      await validateIncident(incidentId);
+      await fetchData({ background: true });
+      try {
+        const fresh = await getIncident(incidentId);
+        if (keepModalOpen || detailIncident?.incident_id === incidentId) {
           setDetailIncident(fresh);
-        } catch { /* ignore */ }
+        } else {
+          setDetailIncident(fresh);
+        }
+      } catch {
+        // ignore detail refresh failure
       }
-      showToast('KB validation complete â€” review results below', 'info');
+      if (!silent) {
+        showToast('KB validation complete - review results below', 'info');
+      }
     } catch {
       showToast('Failed to validate incident', 'error');
+    } finally {
+      setKbReviewBusy('');
     }
   };
 
   const handleMarkFalse = async (incidentId) => {
     try {
-      await markIncidentFalse(incidentId, 'Marked as false report by admin');
-      showToast('Incident marked as false report â€” syncing to external system', 'success');
+      setKbReviewBusy('false');
+      await markIncidentFalse(incidentId, 'Marked as false report by reviewer');
+      showToast('Incident marked as false report - syncing to external system', 'success');
       setDetailIncident(null);
-      fetchData();
+      fetchData({ background: true });
     } catch {
       showToast('Failed to mark incident as false report', 'error');
+    } finally {
+      setKbReviewBusy('');
     }
   };
 
   const handleConfirmValid = async (incidentId) => {
     try {
+      setKbReviewBusy('confirm');
       await confirmIncidentValid(incidentId);
-      showToast('Incident confirmed valid â€” ready for agent assignment', 'success');
+      showToast('Incident confirmed valid - ready for agent assignment', 'success');
       setDetailIncident(null);
-      fetchData();
+      fetchData({ background: true });
     } catch {
       showToast('Failed to confirm incident', 'error');
+    } finally {
+      setKbReviewBusy('');
     }
   };
 
@@ -362,7 +380,7 @@ const AdminDashboard = () => {
         });
       }
       showToast('Request updated successfully');
-      fetchData();
+      fetchData({ background: true });
     } catch {
       showToast('Failed to update request', 'error');
     } finally {
@@ -385,7 +403,7 @@ const AdminDashboard = () => {
       showToast('Backup engineer assigned successfully');
       setAssignBackupModal(null);
       setSelectedBackupAgentId('');
-      fetchData();
+      fetchData({ background: true });
     } catch (error) {
       showToast(error.message || 'Failed to assign backup', 'error');
     }
@@ -409,7 +427,7 @@ const AdminDashboard = () => {
       setItemDispatchModal(null);
       setDispatchEta('');
       setWarehouseNotes('');
-      fetchData();
+      fetchData({ background: true });
     } catch (error) {
       showToast('Failed to dispatch item', 'error');
     }
@@ -560,8 +578,6 @@ const AdminDashboard = () => {
     const previousIncidents = allIncidents.filter((incident) => isWithinRange(incident.created_at, previousRange.start, previousRange.end));
     const filteredTrueKb = kbTrueEntries.filter((entry) => isWithinRange(entry.created_at, range.start, range.end));
     const filteredFalseKb = kbFalseEntries.filter((entry) => isWithinRange(entry.created_at, range.start, range.end));
-    const previousTrueKb = kbTrueEntries.filter((entry) => isWithinRange(entry.created_at, previousRange.start, previousRange.end));
-    const previousFalseKb = kbFalseEntries.filter((entry) => isWithinRange(entry.created_at, previousRange.start, previousRange.end));
     const filteredWorkflows = tenantWorkflows.filter((workflow) => {
       if (!workflow.created_at) return true;
       return isWithinRange(workflow.created_at, range.start, range.end);
@@ -713,35 +729,6 @@ const AdminDashboard = () => {
       ],
     };
   }, [allIncidents, kbFalseEntries, kbTrueEntries, tenantWorkflows, dateRange, customEndDate, customStartDate, totalOpsCount, breachedCount]);
-
-  const renderMetricRows = (items, emptyLabel = 'No data available yet.') => {
-    const total = items.reduce((sum, item) => sum + (item.value || 0), 0);
-
-    if (total === 0) {
-      return <div style={{ color: '#8ea3b9', fontSize: '0.84rem' }}>{emptyLabel}</div>;
-    }
-
-    return (
-      <div style={{ display: 'grid', gap: '10px' }}>
-        {items.map((item) => {
-          const width = getPercent(item.value || 0, total);
-          return (
-            <div key={item.label}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: '10px', marginBottom: '4px' }}>
-                <div style={{ color: '#0f172a', fontSize: '0.83rem', fontWeight: 700 }}>{item.label}</div>
-                <div style={{ color: '#475569', fontSize: '0.78rem', fontWeight: 700 }}>
-                  {item.value} ({width}%)
-                </div>
-              </div>
-              <div style={{ height: '8px', borderRadius: '999px', background: '#dbe5ef', overflow: 'hidden' }}>
-                <div style={{ width: `${Math.max(item.value > 0 ? 6 : 0, width)}%`, height: '100%', borderRadius: '999px', background: item.color }} />
-              </div>
-            </div>
-          );
-        })}
-      </div>
-    );
-  };
 
   const getSlaColor = (slaStatus) => {
     if (slaStatus === 'breached') return '#b91c1c';
@@ -898,7 +885,7 @@ const AdminDashboard = () => {
           <div style={{ flex: 1, minWidth: 0 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
               <span style={{ fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', fontWeight: 700, color: '#345473', fontSize: '0.82rem' }}>
-                {request.incident_id?.replace(/^INC_/i, '').toUpperCase()}
+                {formatIncidentId(request.incident_id)}
               </span>
               <span style={{
                 padding: '2px 7px', borderRadius: '999px', fontSize: '0.7rem', fontWeight: 700,
@@ -979,7 +966,7 @@ const AdminDashboard = () => {
         <div className="panel-soft" style={{ padding: '10px', borderRadius: '12px' }}>
           <div style={{ fontSize: '0.78rem', fontWeight: 700, color: '#030304', marginBottom: '6px' }}>Incident Context</div>
           <div style={{ display: 'grid', gap: '4px', fontSize: '0.82rem', color: '#4d6178' }}>
-            <div><strong>Incident:</strong> {req.incident_id}</div>
+            <div><strong>Incident:</strong> {formatIncidentId(req.incident_id)}</div>
             <div><strong>Type:</strong> {(req.incident_type || 'N/A').replaceAll('_', ' ')}</div>
             <div><strong>User:</strong> {req.user_name || 'N/A'} {req.user_phone ? `(${req.user_phone})` : ''}</div>
             <div><strong>Location:</strong> {req.incident_location || 'N/A'}</div>
@@ -1059,7 +1046,7 @@ const AdminDashboard = () => {
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '8px' }}>
                   <div style={{ minWidth: 0 }}>
                     <div style={{ fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', fontWeight: 800, color: '#345473', fontSize: '0.82rem' }}>
-                      {incident.incident_id?.replace(/^INC_/i, '').toUpperCase()}
+                      {formatIncidentId(incident.incident_id)}
                     </div>
                     <div style={{ marginTop: '3px', color: '#0f172a', fontSize: '0.9rem', fontWeight: 700 }}>
                       {formatCategoryLabel(incident.incident_type || incident.classified_use_case || 'unclassified')}
@@ -1408,7 +1395,7 @@ const AdminDashboard = () => {
                           <tr key={incident.incident_id} onClick={() => handleIncidentRowClick(incident)} style={{ cursor: 'pointer' }}>
                             <td>
                               <span style={{ fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', fontWeight: 700, color: '#345473' }}>
-                                {incident.incident_id?.replace(/^INC_/i, '').toUpperCase()}
+                                {formatIncidentId(incident.incident_id)}
                               </span>
                             </td>
                             <td>{(incident.incident_type || incident.classified_use_case || 'N/A').replaceAll('_', ' ')}</td>
@@ -1739,7 +1726,7 @@ const AdminDashboard = () => {
           <div className="modal-card" onClick={(event) => event.stopPropagation()} style={{ width: 'min(560px, 100%)' }}>
             <h3 style={{ marginBottom: '6px' }}>Review & Approve Resolution</h3>
             <p style={{ margin: '0 0 12px', fontSize: '0.86rem', color: '#4d6178' }}>
-              Review the agent's resolution and approve to mark incident as completed.
+              Review the agent&apos;s resolution and approve to mark incident as completed.
             </p>
 
             {approvingIncident && (
@@ -1893,7 +1880,7 @@ const AdminDashboard = () => {
           <div className="modal-card" onClick={(event) => event.stopPropagation()}>
             <h3 style={{ marginBottom: '6px' }}>Send Customer Notification</h3>
             <p style={{ fontSize: '0.86rem', margin: '0 0 8px', color: '#5f738a' }}>
-              This message will appear in the customer's incident detail page.
+              This message will appear in the customer&apos;s incident detail page.
             </p>
 
             <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', marginBottom: '10px' }}>
@@ -1963,7 +1950,7 @@ const AdminDashboard = () => {
                     >
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
                         <span style={{ fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', fontWeight: 800, color: '#345473' }}>
-                          {incident.incident_id}
+                          {formatIncidentId(incident.incident_id)}
                         </span>
                         <span style={{ padding: '3px 8px', borderRadius: '999px', background: riskMeta.bg, color: riskMeta.color, fontSize: '0.72rem', fontWeight: 800 }}>
                           {riskMeta.label} {Math.round((incident.risk_score ?? 0) * 100)}%
@@ -1996,40 +1983,11 @@ const AdminDashboard = () => {
           const inc = detailIncident;
           const sd = inc.structured_data || {};
           const kbVal = sd._kb_validation || inc.kb_validation_details || null;
-          const riskAssess = sd._risk_assessment || null;
           const statusMeta = getStatusMeta(inc.status);
           const riskMeta = getRiskMeta(inc.risk_score ?? 0);
           const assignedAgent = inc.assigned_agent_id
             ? allAgents.find((a) => a.agent_id === inc.assigned_agent_id)
             : null;
-
-          const labelMap = {
-            incident_type: 'Incident Type', smell_intensity: 'Smell Intensity', smell_location: 'Smell Location',
-            smell_time: 'Time of Smell', smell_duration: 'Smell Duration', appliance_age: 'Appliance Age',
-            other_appliances_affected: 'Other Appliances Affected', recent_area_changes: 'Recent Area Changes',
-            visible_damage: 'Visible Damage', outdoor_smell_strength: 'Outdoor Smell Strength',
-            recent_excavation: 'Recent Excavation Nearby', hissing_location: 'Hissing Location',
-            sound_type: 'Sound Type', meter_spinning: 'Meter Spinning', recent_gas_work: 'Recent Gas Work',
-            is_evacuated: 'Evacuated', co_symptoms: 'CO Symptoms', co_alarm_triggered: 'CO Alarm Triggered',
-            outage_time: 'Outage Time', neighbors_affected: 'Neighbors Affected', valve_position: 'Valve Position',
-            has_night_heating: 'Night Heating', night_smell_location: 'Night Smell Location',
-            nearby_gas_users: 'Nearby Gas Users', tampering_reason: 'Tampering Reason',
-            seal_status: 'Seal Status', consumption_change: 'Consumption Change',
-            symptoms: 'Health Symptoms', appliances_off: 'Appliances Turned Off',
-            meter_moving: 'Meter Moving (Appliances Off)', hissing_sound: 'Hissing Sound Detected',
-            co_alarm: 'CO Alarm Active', property_type: 'Property Type',
-            consumption_delta_pct: 'Consumption Delta', nearby_reports_count: 'Nearby Reports',
-          };
-          const skipKeys = ['flame_photo', 'area_photo', 'audio_recording', 'valve_photo', 'meter_photo',
-            'audio_provided', 'image_provided', 'video_provided', 'audio_leak_confidence',
-            'visual_damage_confidence', 'user_trust_score', '_kb_validation', '_risk_assessment'];
-          const criticalKeys = ['symptoms', 'co_alarm', 'co_alarm_triggered', 'co_symptoms', 'is_evacuated', 'hissing_sound', 'meter_moving'];
-
-          const sdEntries = Object.entries(sd).filter(([k, v]) =>
-            !skipKeys.includes(k) && !k.startsWith('_') && v !== null && v !== undefined && v !== '' && v !== 0
-          );
-          const criticalEntries = sdEntries.filter(([k]) => criticalKeys.includes(k) && (sd[k] === true || sd[k] === 'yes' || sd[k] === 'Yes'));
-          const regularEntries = sdEntries.filter(([k]) => !criticalKeys.includes(k) || !(sd[k] === true || sd[k] === 'yes' || sd[k] === 'Yes'));
 
           const fmtVal = (v) => {
             if (typeof v === 'boolean') return v ? 'Yes' : 'No';
@@ -2037,7 +1995,44 @@ const AdminDashboard = () => {
             const str = String(v).replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
             return str.length > 120 ? str.slice(0, 120) + '...' : str;
           };
-          const fmtKey = (k) => labelMap[k] || k.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+
+          const pickFirst = (...keys) => {
+            for (const key of keys) {
+              const value = sd[key];
+              if (value !== null && value !== undefined && value !== '' && value !== 0) {
+                return value;
+              }
+            }
+            return null;
+          };
+
+          const pickBySuffix = (suffixes) => {
+            const entries = Object.entries(sd);
+            for (const [key, value] of entries) {
+              if (value === null || value === undefined || value === '' || value === 0) continue;
+              if (typeof value !== 'string') continue;
+              const lowered = key.toLowerCase();
+              if (lowered.endsWith('_score') || lowered.endsWith('_normalized_score')) continue;
+              if (suffixes.some((suffix) => lowered.endsWith(`_${suffix}`) || lowered === suffix)) {
+                return value;
+              }
+            }
+            return null;
+          };
+
+          const reportType = inc.incident_type || inc.classified_use_case || sd.incident_type;
+          const model = pickFirst(
+            'kidde_model', 'fa_model', 'fh_model', 'aico_model', 'aico3030_model',
+            'xs_model', 'nest_model', 'net_model', 'cav_model', 'other_model', 'model_number',
+          );
+          const summaryEntries = [
+            ['Reference ID', inc.reference_id || sd.reference_id || sd.ref_id],
+            ['Report Type', reportType],
+            ['Alarm Type', pickFirst('alarm_type')],
+            ['Manufacturer', pickFirst('alarm_manufacturer', 'manufacturer')],
+            ['Model', model],
+            ['Outcome', inc.outcome ? String(inc.outcome).replace(/_/g, ' ') : null],
+          ].filter(([, value]) => value !== null && value !== undefined && value !== '' && value !== 0);
 
           const sectionTitle = (text) => (
             <div style={{ fontSize: '0.72rem', fontWeight: 700, color: '#030304', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '8px', paddingBottom: '4px', borderBottom: '1px solid #e2e8f0' }}>
@@ -2053,7 +2048,7 @@ const AdminDashboard = () => {
                   <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
                     <h2 style={{ margin: 0, fontSize: '1.05rem', color: '#0f172a' }}>Incident Details</h2>
                     <span style={{ fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', fontSize: '0.78rem', color: '#475569', background: '#f1f5f9', padding: '2px 8px', borderRadius: '6px' }}>
-                      {inc.incident_id}
+                      {formatIncidentId(inc.incident_id)}
                     </span>
                     <span style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', borderRadius: '999px', padding: '3px 10px', background: statusMeta.bg, color: statusMeta.text, fontSize: '0.74rem', fontWeight: 700 }}>
                       <span style={{ width: 6, height: 6, borderRadius: '50%', background: statusMeta.dot }} />
@@ -2065,7 +2060,7 @@ const AdminDashboard = () => {
                   {/* Action Buttons on the right */}
                   <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
                     {inc.status === 'new' && inc.external_ref && !inc.kb_match_type && (
-                      <button type="button" className="secondary-btn" style={{ fontSize: '0.82rem', borderColor: '#93c5fd', color: '#1d4ed8', background: '#eff6ff' }} onClick={() => handleValidate(inc.incident_id)}>
+                      <button type="button" className="secondary-btn" style={{ fontSize: '0.82rem', borderColor: '#93c5fd', color: '#1d4ed8', background: '#eff6ff' }} onClick={() => handleValidate(inc.incident_id, { silent: true, keepModalOpen: true })}>
                         Validate with KB
                       </button>
                     )}
@@ -2123,28 +2118,13 @@ const AdminDashboard = () => {
 
 
                       {/* Assessment Details */}
-                      {sdEntries.length > 0 && (
+                      {summaryEntries.length > 0 && (
                         <>
-                          {/* Critical Alerts */}
-                          {criticalEntries.length > 0 && (
-                            <div style={{ marginBottom: '12px', padding: '8px 10px', borderRadius: '10px', background: '#fef2f2', border: '1px solid #fecaca' }}>
-                              <div style={{ fontSize: '0.72rem', fontWeight: 700, color: '#b91c1c', marginBottom: '4px' }}>CRITICAL ALERTS</div>
-                              <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
-                                {criticalEntries.map(([k]) => (
-                                  <span key={k} style={{ fontSize: '0.76rem', padding: '2px 8px', borderRadius: '999px', background: '#fee2e2', color: '#991b1b', fontWeight: 700 }}>
-                                    {fmtKey(k)}
-                                  </span>
-                                ))}
-                              </div>
-                            </div>
-                          )}
-
-                          {/* Assessment fields in clean list */}
                           <div style={{ display: 'grid', gap: '6px' }}>
-                            {regularEntries.map(([k, v]) => (
-                              <div key={k} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', fontSize: '0.84rem', padding: '6px 8px', background: '#f8fafc', borderRadius: '6px', gap: '12px' }}>
-                                <span style={{ color: '#64748b', fontWeight: 600 }}>{fmtKey(k)}</span>
-                                <strong style={{ color: '#1e293b', textAlign: 'right' }}>{fmtVal(v)}</strong>
+                            {summaryEntries.map(([label, value]) => (
+                              <div key={label} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', fontSize: '0.84rem', padding: '6px 8px', background: '#f8fafc', borderRadius: '6px', gap: '12px' }}>
+                                <span style={{ color: '#64748b', fontWeight: 600 }}>{label}</span>
+                                <strong style={{ color: '#1e293b', textAlign: 'right' }}>{fmtVal(value)}</strong>
                               </div>
                             ))}
                           </div>
@@ -2180,14 +2160,31 @@ const AdminDashboard = () => {
                     )}
 
                     {/* KB Validation */}
-                    {kbVal && kbVal.verdict !== 'unknown' && (() => {
-                      // Calculate max scores from all_matches array
-                      const allMatches = kbVal.all_matches || [];
-                      const trueMatches = allMatches.filter(m => m.kb_type === 'true');
-                      const falseMatches = allMatches.filter(m => m.kb_type === 'false');
-
-                      const maxTrueScore = trueMatches.length > 0 ? Math.max(...trueMatches.map(m => m.score || 0)) : 0;
-                      const maxFalseScore = falseMatches.length > 0 ? Math.max(...falseMatches.map(m => m.score || 0)) : 0;
+                    {kbVal && (() => {
+                      const rawVerdict = (kbVal.verdict || kbVal.best_match_type || inc.kb_match_type || 'unknown').toString().toLowerCase();
+                      const normalizedVerdict = ['true', 'false', 'admin_confirmed'].includes(rawVerdict) ? rawVerdict : 'unknown';
+                      const trueMatches = kbVal.top_true_matches || [];
+                      const falseMatches = kbVal.top_false_matches || [];
+                      const avgTrueScore = (kbVal.true_kb_match ?? kbVal.true_kb_score) ?? (
+                        trueMatches.length > 0
+                          ? trueMatches.reduce((sum, match) => sum + (match.score || 0), 0) / trueMatches.length
+                          : 0
+                      );
+                      const avgFalseScore = (kbVal.false_kb_match ?? kbVal.false_kb_score) ?? (
+                        falseMatches.length > 0
+                          ? falseMatches.reduce((sum, match) => sum + (match.score || 0), 0) / falseMatches.length
+                          : 0
+                      );
+                      const badgeBg = normalizedVerdict === 'true' ? '#ecfdf5' : normalizedVerdict === 'false' ? '#fef2f2' : '#eff6ff';
+                      const badgeColor = normalizedVerdict === 'true' ? '#047857' : normalizedVerdict === 'false' ? '#b91c1c' : '#1d4ed8';
+                      const badgeBorder = normalizedVerdict === 'true' ? '#bbf7d0' : normalizedVerdict === 'false' ? '#fecaca' : '#bfdbfe';
+                      const badgeLabel = normalizedVerdict === 'true'
+                        ? 'TRUE INCIDENT'
+                        : normalizedVerdict === 'false'
+                          ? 'FALSE REPORT'
+                          : normalizedVerdict === 'admin_confirmed'
+                            ? 'ADMIN CONFIRMED'
+                            : 'NO STRONG KB MATCH';
 
                       return (
                         <div className="panel-soft" style={{ padding: '12px 14px', borderRadius: '12px' }}>
@@ -2195,11 +2192,11 @@ const AdminDashboard = () => {
                           <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '10px' }}>
                             <span style={{
                               padding: '4px 12px', borderRadius: '999px', fontSize: '0.82rem', fontWeight: 700,
-                              background: kbVal.verdict === 'true' ? '#ecfdf5' : '#fef2f2',
-                              color: kbVal.verdict === 'true' ? '#047857' : '#b91c1c',
-                              border: `1px solid ${kbVal.verdict === 'true' ? '#bbf7d0' : '#fecaca'}`,
+                              background: badgeBg,
+                              color: badgeColor,
+                              border: `1px solid ${badgeBorder}`,
                             }}>
-                              {kbVal.verdict === 'true' ? 'TRUE INCIDENT' : 'FALSE REPORT'}
+                              {badgeLabel}
                             </span>
                             {kbVal.confidence != null && (
                               <span style={{ fontSize: '0.78rem', color: '#64748b' }}>
@@ -2207,149 +2204,145 @@ const AdminDashboard = () => {
                               </span>
                             )}
                           </div>
-                          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '6px 16px', fontSize: '0.82rem' }}>
-                            <div>
-                              <span style={{ color: '#64748b' }}>True KB Score:</span>{' '}
-                              <strong style={{ color: '#047857' }}>{(maxTrueScore * 100).toFixed(0)}%</strong>
-                            </div>
-                            <div>
-                              <span style={{ color: '#64748b' }}>False KB Score:</span>{' '}
-                              <strong style={{ color: '#b91c1c' }}>{(maxFalseScore * 100).toFixed(0)}%</strong>
-                            </div>
-                          </div>
-                          {kbVal.explanation && (
-                            <p style={{ margin: '8px 0 0', fontSize: '0.82rem', color: '#475569', background: '#f8fafc', padding: '8px 10px', borderRadius: '8px', lineHeight: 1.5 }}>
-                              {kbVal.explanation}
-                            </p>
-                          )}
-
-                          {/* All Matched KB Entries - Expandable List */}
-                          {kbVal.all_matches && kbVal.all_matches.length > 0 && (
-                            <div style={{ marginTop: '12px' }}>
-                              <div style={{
-                                fontSize: '0.76rem',
-                                fontWeight: 700,
-                                color: '#475569',
-                                textTransform: 'uppercase',
-                                letterSpacing: '0.04em',
-                                marginBottom: '8px'
-                              }}>
-                                All Matched KB Entries ({kbVal.all_matches.length})
-                              </div>
-                              <div style={{ display: 'grid', gap: '6px' }}>
-                                {kbVal.all_matches.map((match, idx) => {
-                                  const isExpanded = expandedKbEntry === match.kb_id;
-                                  const isTrue = match.kb_type === 'true';
-                                  const isBest = match.kb_id === kbVal.matched_kb_id;
-
-                                  return (
-                                    <div key={match.kb_id} style={{
-                                      border: `1px solid ${isTrue ? '#bbf7d0' : '#fecaca'}`,
-                                      borderRadius: '8px',
-                                      overflow: 'hidden',
-                                      background: isBest ? (isTrue ? '#f0fdf4' : '#fef2f2') : '#ffffff'
-                                    }}>
-                                      {/* Clickable Header */}
-                                      <div
-                                        onClick={() => setExpandedKbEntry(isExpanded ? null : match.kb_id)}
-                                        style={{
-                                          padding: '10px 12px',
-                                          cursor: 'pointer',
-                                          display: 'flex',
-                                          alignItems: 'center',
-                                          justifyContent: 'space-between',
-                                          background: isExpanded ? (isTrue ? '#f0fdf4' : '#fef2f2') : 'transparent',
-                                          transition: 'background 0.2s'
-                                        }}
+                          {(trueMatches.length > 0 || falseMatches.length > 0) && (
+                            <div style={{ marginTop: '12px', display: 'grid', gap: '12px' }}>
+                              {trueMatches.length > 0 && (
+                                <details style={{ border: '1px solid #bbf7d0', borderRadius: '10px', background: '#f8fffb', padding: '8px 10px' }}>
+                                  <summary style={{ cursor: 'pointer', listStyle: 'none', fontSize: '0.76rem', fontWeight: 700, color: '#047857', textTransform: 'uppercase', letterSpacing: '0.04em', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px' }}>
+                                    <span>Matched True Records ({trueMatches.length})</span>
+                                    <span style={{ fontSize: '0.9rem', lineHeight: 1 }}>▼</span>
+                                  </summary>
+                                  <div style={{ display: 'grid', gap: '6px', marginTop: '10px' }}>
+                                    {trueMatches.slice(0, 3).map((match, idx) => {
+                                      const entryKey = `result-true-${match.kb_id || idx}`;
+                                      const isExpanded = expandedKbEntry === entryKey;
+                                      return (
+                                      <button
+                                        type="button"
+                                        key={entryKey}
+                                        onClick={() => setExpandedKbEntry(isExpanded ? null : entryKey)}
+                                        style={{ border: '1px solid #bbf7d0', background: '#f0fdf4', borderRadius: '8px', padding: '8px 10px', textAlign: 'left', cursor: 'pointer', width: '100%' }}
                                       >
-                                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flex: 1 }}>
-                                          <span style={{
-                                            fontSize: '0.8rem',
-                                            fontWeight: 700,
-                                            color: isTrue ? '#047857' : '#b91c1c',
-                                            fontFamily: 'monospace'
-                                          }}>
-                                            {match.kb_id}
-                                          </span>
-                                          {isBest && (
-                                            <span style={{
-                                              fontSize: '0.7rem',
-                                              fontWeight: 700,
-                                              padding: '2px 6px',
-                                              borderRadius: '4px',
-                                              background: isTrue ? '#047857' : '#b91c1c',
-                                              color: '#ffffff'
-                                            }}>
-                                              BEST MATCH
-                                            </span>
-                                          )}
-                                          <span style={{
-                                            fontSize: '0.76rem',
-                                            color: '#64748b',
-                                            marginLeft: 'auto'
-                                          }}>
-                                            {(match.score * 100).toFixed(0)}% match
+                                        <div style={{ display: 'flex', justifyContent: 'space-between', gap: '8px', marginBottom: '3px' }}>
+                                          <strong style={{ fontSize: '0.8rem', color: '#166534' }}>{formatKbDisplayId(match, match.incident_type || 'True incident')}</strong>
+                                          <span style={{ display: 'inline-flex', alignItems: 'center', gap: '8px' }}>
+                                            <span style={{ fontSize: '0.74rem', fontWeight: 700, color: '#047857' }}>{Math.round((match.score || 0) * 100)}%</span>
+                                            <span style={{ fontSize: '0.8rem', color: '#166534' }}>{isExpanded ? '▲' : '▼'}</span>
                                           </span>
                                         </div>
-                                        <span style={{
-                                          fontSize: '1rem',
-                                          color: '#94a3b8',
-                                          marginLeft: '8px',
-                                          transform: isExpanded ? 'rotate(180deg)' : 'rotate(0deg)',
-                                          transition: 'transform 0.2s'
-                                        }}>
-                                          ▼
-                                        </span>
-                                      </div>
-
-                                      {/* Expandable Content */}
-                                      {isExpanded && (
-                                        <div style={{
-                                          padding: '12px',
-                                          borderTop: `1px solid ${isTrue ? '#bbf7d0' : '#fecaca'}`,
-                                          background: isTrue ? '#f0fdf4' : '#fef2f2',
-                                          display: 'grid',
-                                          gap: '10px',
-                                          fontSize: '0.84rem'
-                                        }}>
-                                          {match.incident_type && (
-                                            <div>
-                                              <span style={{ color: '#64748b', fontWeight: 600 }}>Type:</span>{' '}
-                                              <strong style={{ color: '#1e293b' }}>{match.incident_type.replace(/_/g, ' ')}</strong>
-                                            </div>
-                                          )}
-                                          {match.description && (
-                                            <div>
-                                              <span style={{ color: '#64748b', fontWeight: 600 }}>Description:</span>
-                                              <div style={{ color: '#475569', marginTop: '4px', lineHeight: 1.5 }}>{match.description}</div>
-                                            </div>
-                                          )}
-                                          {match.outcome && (
-                                            <div>
-                                              <span style={{ color: '#64748b', fontWeight: 600 }}>Outcome:</span>{' '}
-                                              <strong style={{ color: '#1e293b' }}>{match.outcome.replace(/_/g, ' ')}</strong>
-                                            </div>
-                                          )}
-                                          {match.resolution_summary && (
-                                            <div>
-                                              <span style={{ color: '#64748b', fontWeight: 600 }}>Resolution:</span>
-                                              <div style={{ color: '#475569', marginTop: '4px', lineHeight: 1.5 }}>{match.resolution_summary}</div>
-                                            </div>
-                                          )}
-                                          {match.reason && (
-                                            <div>
-                                              <span style={{ color: '#64748b', fontWeight: 600 }}>Reason:</span>
-                                              <div style={{ color: '#475569', marginTop: '4px', lineHeight: 1.5 }}>{match.reason}</div>
-                                            </div>
-                                          )}
+                                        {match.description && <div style={{ fontSize: '0.76rem', color: '#475569' }}>{match.description}</div>}
+                                        {isExpanded && (
+                                          <div style={{ marginTop: '8px', paddingTop: '8px', borderTop: '1px solid #bbf7d0', display: 'grid', gap: '6px' }}>
+                                            {match.resolution_summary && (
+                                              <div style={{ fontSize: '0.74rem', color: '#475569' }}>
+                                                <strong style={{ color: '#166534' }}>Summary:</strong> {match.resolution_summary}
+                                              </div>
+                                            )}
+                                            {Array.isArray(match.matched_tags) && match.matched_tags.length > 0 && (
+                                              <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+                                                {match.matched_tags.map((tag) => (
+                                                  <span key={tag} style={{ fontSize: '0.7rem', padding: '2px 8px', borderRadius: '999px', background: '#dcfce7', color: '#166534', fontWeight: 700 }}>
+                                                    {String(tag).replace(/_/g, ' ')}
+                                                  </span>
+                                                ))}
+                                              </div>
+                                            )}
+                                            {match.manufacturer && (
+                                              <div style={{ fontSize: '0.74rem', color: '#475569' }}>
+                                                <strong style={{ color: '#166534' }}>Manufacturer:</strong> {match.manufacturer}
+                                              </div>
+                                            )}
+                                            {match.model && (
+                                              <div style={{ fontSize: '0.74rem', color: '#475569' }}>
+                                                <strong style={{ color: '#166534' }}>Model:</strong> {match.model}
+                                              </div>
+                                            )}
+                                            {match.pattern_fields && Object.keys(match.pattern_fields).length > 0 && (
+                                              <div style={{ display: 'grid', gap: '4px' }}>
+                                                {Object.entries(match.pattern_fields).map(([field, value]) => (
+                                                  <div key={field} style={{ fontSize: '0.73rem', color: '#475569' }}>
+                                                    <strong style={{ color: '#166534' }}>{field.replace(/_/g, ' ')}:</strong> {String(value)}
+                                                  </div>
+                                                ))}
+                                              </div>
+                                            )}
+                                          </div>
+                                        )}
+                                      </button>
+                                    )})}
+                                  </div>
+                                </details>
+                              )}
+                              {falseMatches.length > 0 && (
+                                <details style={{ border: '1px solid #fecaca', borderRadius: '10px', background: '#fffafa', padding: '8px 10px' }}>
+                                  <summary style={{ cursor: 'pointer', listStyle: 'none', fontSize: '0.76rem', fontWeight: 700, color: '#b91c1c', textTransform: 'uppercase', letterSpacing: '0.04em', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px' }}>
+                                    <span>Matched False Records ({falseMatches.length})</span>
+                                    <span style={{ fontSize: '0.9rem', lineHeight: 1 }}>▼</span>
+                                  </summary>
+                                  <div style={{ display: 'grid', gap: '6px', marginTop: '10px' }}>
+                                    {falseMatches.slice(0, 3).map((match, idx) => {
+                                      const entryKey = `result-false-${match.kb_id || idx}`;
+                                      const isExpanded = expandedKbEntry === entryKey;
+                                      return (
+                                      <button
+                                        type="button"
+                                        key={entryKey}
+                                        onClick={() => setExpandedKbEntry(isExpanded ? null : entryKey)}
+                                        style={{ border: '1px solid #fecaca', background: '#fef2f2', borderRadius: '8px', padding: '8px 10px', textAlign: 'left', cursor: 'pointer', width: '100%' }}
+                                      >
+                                        <div style={{ display: 'flex', justifyContent: 'space-between', gap: '8px', marginBottom: '3px' }}>
+                                          <strong style={{ fontSize: '0.8rem', color: '#991b1b' }}>{formatKbDisplayId(match, match.incident_type || 'False report')}</strong>
+                                          <span style={{ display: 'inline-flex', alignItems: 'center', gap: '8px' }}>
+                                            <span style={{ fontSize: '0.74rem', fontWeight: 700, color: '#b91c1c' }}>{Math.round((match.score || 0) * 100)}%</span>
+                                            <span style={{ fontSize: '0.8rem', color: '#991b1b' }}>{isExpanded ? '▲' : '▼'}</span>
+                                          </span>
                                         </div>
-                                      )}
-                                    </div>
-                                  );
-                                })}
-                              </div>
+                                        {match.description && <div style={{ fontSize: '0.76rem', color: '#475569' }}>{match.description}</div>}
+                                        {isExpanded && (
+                                          <div style={{ marginTop: '8px', paddingTop: '8px', borderTop: '1px solid #fecaca', display: 'grid', gap: '6px' }}>
+                                            {match.resolution_summary && (
+                                              <div style={{ fontSize: '0.74rem', color: '#475569' }}>
+                                                <strong style={{ color: '#991b1b' }}>Summary:</strong> {match.resolution_summary}
+                                              </div>
+                                            )}
+                                            {Array.isArray(match.matched_tags) && match.matched_tags.length > 0 && (
+                                              <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+                                                {match.matched_tags.map((tag) => (
+                                                  <span key={tag} style={{ fontSize: '0.7rem', padding: '2px 8px', borderRadius: '999px', background: '#fee2e2', color: '#991b1b', fontWeight: 700 }}>
+                                                    {String(tag).replace(/_/g, ' ')}
+                                                  </span>
+                                                ))}
+                                              </div>
+                                            )}
+                                            {match.manufacturer && (
+                                              <div style={{ fontSize: '0.74rem', color: '#475569' }}>
+                                                <strong style={{ color: '#991b1b' }}>Manufacturer:</strong> {match.manufacturer}
+                                              </div>
+                                            )}
+                                            {match.model && (
+                                              <div style={{ fontSize: '0.74rem', color: '#475569' }}>
+                                                <strong style={{ color: '#991b1b' }}>Model:</strong> {match.model}
+                                              </div>
+                                            )}
+                                            {match.pattern_fields && Object.keys(match.pattern_fields).length > 0 && (
+                                              <div style={{ display: 'grid', gap: '4px' }}>
+                                                {Object.entries(match.pattern_fields).map(([field, value]) => (
+                                                  <div key={field} style={{ fontSize: '0.73rem', color: '#475569' }}>
+                                                    <strong style={{ color: '#991b1b' }}>{field.replace(/_/g, ' ')}:</strong> {String(value)}
+                                                  </div>
+                                                ))}
+                                              </div>
+                                            )}
+                                          </div>
+                                        )}
+                                      </button>
+                                    )})}
+                                  </div>
+                                </details>
+                              )}
                             </div>
                           )}
+
                         </div>
                       );
                     })()}
@@ -2405,26 +2398,40 @@ const AdminDashboard = () => {
                             </span>
                           </div>
                         )}
-                        {inc.kb_match_type && inc.kb_match_type !== 'unknown' && (
+                        {(inc.kb_match_type || kbVal?.verdict || kbVal?.best_match_type) && (() => {
+                          const rawVerdict = (kbVal?.verdict || kbVal?.best_match_type || inc.kb_match_type || 'unknown').toString().toLowerCase();
+                          const verdictLabel = rawVerdict === 'true'
+                            ? 'True Incident'
+                            : rawVerdict === 'false'
+                              ? 'False Report'
+                              : rawVerdict === 'admin_confirmed'
+                                ? 'Admin Confirmed'
+                                : 'Unknown / No strong match';
+                          const verdictColor = rawVerdict === 'true'
+                            ? '#047857'
+                            : rawVerdict === 'false'
+                              ? '#b91c1c'
+                              : rawVerdict === 'admin_confirmed'
+                                ? '#166534'
+                                : '#1d4ed8';
+                          return (
                           <div>
                             <span style={{ color: '#64748b' }}>KB Verdict:</span>{' '}
-                            <strong style={{ color: inc.kb_match_type === 'true' ? '#047857' : '#b91c1c' }}>
-                              {inc.kb_match_type === 'true' ? 'True Incident' : 'False Report'}
+                            <strong style={{ color: verdictColor }}>
+                              {verdictLabel}
                             </strong>
                           </div>
-                        )}
-                        {inc.kb_similarity_score != null && inc.kb_match_type !== 'unknown' && (
+                          );
+                        })()}
+                        {inc.kb_similarity_score != null && (
                           <div><span style={{ color: '#64748b' }}>KB Similarity:</span> <strong>{(inc.kb_similarity_score * 100).toFixed(0)}%</strong></div>
                         )}
                         <div>
                           <span style={{ color: '#64748b' }}>Risk:</span>{' '}
-                          <span style={{ padding: '2px 8px', borderRadius: '999px', fontSize: '0.76rem', fontWeight: 700, background: riskMeta.bg, color: riskMeta.color }}>
-                            {riskMeta.label} {((inc.risk_score ?? 0) * 100).toFixed(0)}%
+                          <span style={{ fontSize: '0.76rem', fontWeight: 700, color: riskMeta.color }}>
+                            {riskMeta.label}
                           </span>
                         </div>
-                        {inc.confidence_score != null && (
-                          <div><span style={{ color: '#64748b' }}>Confidence:</span> <strong>{(inc.confidence_score * 100).toFixed(0)}%</strong></div>
-                        )}
                         {inc.sla_hours != null && (
                           <div><span style={{ color: '#64748b' }}>SLA:</span> <strong>{inc.sla_hours}h</strong></div>
                         )}
@@ -2524,31 +2531,37 @@ const AdminDashboard = () => {
                 </div>
 
                 {/* KB Validation Review Panel */}
-                {inc.kb_match_type && inc.kb_match_type !== 'admin_confirmed' && inc.kb_match_type !== 'unknown' && (() => {
-                  const kbDetails = inc.kb_validation_details || kbVal || {};
-                  const rawVerdict = (kbDetails.verdict || inc.kb_match_type || '').toString().toLowerCase();
-                  const normalizedVerdict = ['true', 'false'].includes(rawVerdict) ? rawVerdict : null;
+                {(inc.kb_match_type || inc.kb_validation_details || kbVal) && (() => {
+                  const kbDetails = kbVal || inc.kb_validation_details || {};
+                  const rawVerdict = (kbDetails.verdict || kbDetails.best_match_type || inc.kb_match_type || 'unknown').toString().toLowerCase();
+                  const normalizedVerdict = ['true', 'false', 'admin_confirmed'].includes(rawVerdict) ? rawVerdict : 'unknown';
 
-                  if (!normalizedVerdict) return null;
+                  const trueMatches = kbDetails.top_true_matches || [];
+                  const falseMatches = kbDetails.top_false_matches || [];
 
-                  // Calculate max scores from all_matches array
-                  const allMatches = kbDetails.all_matches || [];
-                  const trueMatches = allMatches.filter(m => m.kb_type === 'true');
-                  const falseMatches = allMatches.filter(m => m.kb_type === 'false');
-
-                  const maxTrueScore = trueMatches.length > 0 ? Math.max(...trueMatches.map(m => m.score || 0)) : 0;
-                  const maxFalseScore = falseMatches.length > 0 ? Math.max(...falseMatches.map(m => m.score || 0)) : 0;
-
-                  let trueScore = Math.round(maxTrueScore * 100);
-                  let falseScore = Math.round(maxFalseScore * 100);
+                  let trueScore = Math.round((((kbDetails.true_kb_match ?? kbDetails.true_kb_score) ?? 0) || 0) * 100);
+                  let falseScore = Math.round((((kbDetails.false_kb_match ?? kbDetails.false_kb_score) ?? 0) || 0) * 100);
 
                   trueScore = Math.max(0, Math.min(100, trueScore));
                   falseScore = Math.max(0, Math.min(100, falseScore));
 
                   const explanation = kbDetails.explanation || '';
-                  const panelBorder = normalizedVerdict === 'true' ? '#bbf7d0' : '#fecaca';
-                  const verdictColor = normalizedVerdict === 'true' ? '#047857' : '#b91c1c';
-                  const verdictLabel = normalizedVerdict === 'true' ? 'Likely Valid Incident' : 'Likely False Report';
+                  const reviewerOverride = Boolean(kbDetails.reviewer_override);
+                  const canReviewKb = ['new', 'in_progress', 'pending_company_action', 'false_report', 'completed'].includes(inc.status) && !reviewerOverride;
+                  const panelBorder = normalizedVerdict === 'true' ? '#bbf7d0' : normalizedVerdict === 'false' ? '#fecaca' : '#bfdbfe';
+                  const verdictColor = normalizedVerdict === 'true' ? '#047857' : normalizedVerdict === 'false' ? '#b91c1c' : '#1d4ed8';
+                  const verdictLabel = normalizedVerdict === 'true'
+                    ? 'Likely True Incident'
+                    : normalizedVerdict === 'false'
+                      ? 'Likely False Report'
+                      : normalizedVerdict === 'admin_confirmed'
+                        ? 'Admin Confirmed Valid'
+                        : 'Validation Completed Without Strong Match';
+                  const reviewPrompt = normalizedVerdict === 'true'
+                    ? 'Do you want to mark this as a false report or re-validate it?'
+                    : normalizedVerdict === 'false'
+                      ? 'Do you want to confirm this as a true incident or re-validate it?'
+                      : 'Do you want to review this verdict or run validation again?';
 
                   return (
                     <div style={{ padding: '12px 20px', borderTop: `2px solid ${panelBorder}`, background: '#ffffff' }}>
@@ -2559,30 +2572,27 @@ const AdminDashboard = () => {
                         <span style={{ width: 10, height: 10, borderRadius: '50%', background: verdictColor, flexShrink: 0 }} />
                         <span style={{ fontSize: '0.86rem', fontWeight: 700, color: verdictColor }}>{verdictLabel}</span>
                       </div>
-
-                      <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', marginBottom: '10px', flexWrap: 'wrap' }}>
-                        <div style={{ fontSize: '0.88rem', fontWeight: 700, color: '#047857', padding: '8px 16px', background: '#ecfdf5', borderRadius: '8px', border: '1px solid #bbf7d0' }}>True {trueScore}%</div>
-                        <div style={{ fontSize: '0.88rem', fontWeight: 700, color: '#b91c1c', padding: '8px 16px', background: '#fef2f2', borderRadius: '8px', border: '1px solid #fecaca' }}>False {falseScore}%</div>
-                      </div>
-
-                      {explanation && (
-                        <div style={{ fontSize: '0.78rem', color: '#475569', fontStyle: 'italic', marginBottom: '10px', lineHeight: 1.4 }}>
-                          {explanation}
-                        </div>
-                      )}
-
                       {/* Action buttons */}
-                      {inc.status === 'new' && (
-                        <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-                          <button type="button" className="secondary-btn" style={{ fontSize: '0.78rem', padding: '6px 14px', borderColor: '#86efac', color: '#047857', background: '#ecfdf5', fontWeight: 700 }} onClick={() => handleConfirmValid(inc.incident_id)}>
-                            Confirm Valid & Proceed
-                          </button>
-                          <button type="button" className="secondary-btn" style={{ fontSize: '0.78rem', padding: '6px 14px', borderColor: '#fca5a5', color: '#b91c1c', background: '#fff5f5', fontWeight: 700 }} onClick={() => handleMarkFalse(inc.incident_id)}>
-                            Mark as False Report
-                          </button>
-                          <button type="button" className="secondary-btn" style={{ fontSize: '0.78rem', padding: '6px 14px', borderColor: '#93c5fd', color: '#1d4ed8', background: '#eff6ff', fontWeight: 700 }} onClick={() => handleValidate(inc.incident_id)}>
+                      {canReviewKb && normalizedVerdict !== 'admin_confirmed' && (
+                        <div style={{ display: 'grid', gap: '10px' }}>
+                          <div style={{ fontSize: '0.8rem', color: '#475569' }}>
+                            {reviewPrompt}
+                          </div>
+                          <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                          {normalizedVerdict !== 'true' && (
+                            <button type="button" className="secondary-btn" disabled={Boolean(kbReviewBusy)} style={{ fontSize: '0.78rem', padding: '6px 14px', borderColor: '#86efac', color: '#047857', background: '#ecfdf5', fontWeight: 700, cursor: kbReviewBusy ? 'not-allowed' : 'pointer', opacity: kbReviewBusy && kbReviewBusy !== 'confirm' ? 0.65 : 1 }} onClick={() => handleConfirmValid(inc.incident_id)}>
+                              Confirm True Incident
+                            </button>
+                          )}
+                          {normalizedVerdict !== 'false' && (
+                            <button type="button" className="secondary-btn" disabled={Boolean(kbReviewBusy)} style={{ fontSize: '0.78rem', padding: '6px 14px', borderColor: '#fca5a5', color: '#b91c1c', background: '#fff5f5', fontWeight: 700, cursor: kbReviewBusy ? 'not-allowed' : 'pointer', opacity: kbReviewBusy && kbReviewBusy !== 'false' ? 0.65 : 1 }} onClick={() => handleMarkFalse(inc.incident_id)}>
+                              Mark as False Report
+                            </button>
+                          )}
+                          <button type="button" className="secondary-btn" disabled={Boolean(kbReviewBusy)} style={{ fontSize: '0.78rem', padding: '6px 14px', borderColor: '#93c5fd', color: '#1d4ed8', background: '#eff6ff', fontWeight: 700, cursor: kbReviewBusy ? 'not-allowed' : 'pointer', opacity: kbReviewBusy && kbReviewBusy !== 'validate' ? 0.65 : 1 }} onClick={() => handleValidate(inc.incident_id, { silent: true, keepModalOpen: true })}>
                             Re-validate
                           </button>
+                        </div>
                         </div>
                       )}
                     </div>
@@ -2613,7 +2623,7 @@ const AdminDashboard = () => {
       })()}
 
       {toast && (
-        <div style={{ position: 'fixed', right: '22px', bottom: '22px', zIndex: 9999, borderRadius: '12px', border: `1px solid ${toast.type === 'error' ? '#fecaca' : '#bbf7d0'}`, background: toast.type === 'error' ? '#fef2f2' : '#ecfdf5', color: toast.type === 'error' ? '#b91c1c' : '#047857', padding: '10px 14px', boxShadow: '0 16px 24px -22px rgba(15,31,51,0.65)', fontWeight: 700, fontSize: '0.84rem' }}>
+        <div style={{ position: 'fixed', top: '22px', right: '22px', zIndex: 9999, borderRadius: '12px', border: `1px solid ${toast.type === 'error' ? '#fecaca' : '#bbf7d0'}`, background: toast.type === 'error' ? '#fef2f2' : '#ecfdf5', color: toast.type === 'error' ? '#b91c1c' : '#047857', padding: '10px 14px', boxShadow: '0 16px 24px -22px rgba(15,31,51,0.65)', fontWeight: 700, fontSize: '0.84rem', minWidth: '280px', animation: 'fadeSlideIn 0.25s ease' }}>
           {toast.message}
         </div>
       )}
@@ -2665,6 +2675,11 @@ const AdminDashboard = () => {
           .page-container > section:first-of-type {
             grid-template-columns: 1fr;
           }
+        }
+
+        @keyframes fadeSlideIn {
+          from { opacity: 0; transform: translateY(-8px); }
+          to { opacity: 1; transform: translateY(0); }
         }
       `}</style>
     </div>

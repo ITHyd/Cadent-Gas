@@ -7,13 +7,13 @@ const QuestionInput = ({ questionData, onSubmit }) => {
   const handleSubmit = (e) => {
     e.preventDefault();
     if (answer || !questionData?.required) {
-      onSubmit({ [questionData.question_text]: answer });
+      onSubmit({ message: answer });
       setAnswer('');
     }
   };
 
   const handleOptionClick = (option) => {
-    onSubmit({ [questionData.question_text]: option });
+    onSubmit({ message: option });
   };
 
   return (
@@ -61,7 +61,7 @@ const QuestionInput = ({ questionData, onSubmit }) => {
             value={answer}
             onChange={(e) => setAnswer(e.target.value)}
             required={questionData.required}
-            placeholder="Type your answer..."
+            placeholder={questionData.placeholder || "Type your answer..."}
             className="input-control flex-1"
           />
           <button type="submit" className="btn-primary">

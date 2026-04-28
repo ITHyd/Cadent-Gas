@@ -1,3 +1,5 @@
+import { ensureFreshAccessToken } from "./api";
+
 /**
  * Build a WebSocket URL dynamically from the current browser location.
  * In development, Vite's proxy (ws: true) forwards /api/* WS connections
@@ -10,8 +12,12 @@ const getWsBaseUrl = () => {
   return `${protocol}//${window.location.host}`;
 };
 
-export const connectWebSocket = (sessionId) => {
-  const token = localStorage.getItem('access_token');
+export const connectWebSocket = async (sessionId) => {
+  const token = await ensureFreshAccessToken({ minValiditySeconds: 60 });
+  if (!token) {
+    throw new Error("Your session expired. Please sign in again.");
+  }
+
   const tokenParam = token ? `?token=${encodeURIComponent(token)}` : '';
   const url = `${getWsBaseUrl()}/api/v1/agents/ws/${sessionId}${tokenParam}`;
 

@@ -19,7 +19,7 @@ from app.core.config import settings
 from app.core.rate_limit import limiter
 from app.core.database import init_db
 from app.core.mongodb import connect_to_mongo, close_mongo_connection, get_database
-from app.services.workflow_repository import register_default_workflow
+from app.services.workflow_repository import register_default_workflow, workflow_repository
 from app.services.workflow_seeder import seed_default_workflows_for_tenant
 from app.scripts.seed_users import seed_users
 
@@ -147,9 +147,14 @@ async def lifespan(app: FastAPI):
     from app.api.tenants import seed_tenants
     await seed_tenants()
 
+    # Load persisted workflows and incidents before seeding defaults
+    await workflow_repository.load_from_db()
+
     # Load tenant user cache for notification routing
     from app.api.agents import agent_orchestrator
+    await agent_orchestrator.incident_service.load_from_db(db)
     await agent_orchestrator.incident_service.load_tenant_users(db)
+    await agent_orchestrator.load_sessions_from_db()
 
     # Seed default workflows for demo tenant
     logger.info("Seeding default workflows...")

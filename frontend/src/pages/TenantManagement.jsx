@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { formatUseCase } from '../utils/formatters';
+import { formatIncidentId } from '../utils/incidentIds';
 import {
   getTenants, getSuperTenantDetail, getTenantConnectors,
   getAdminGroups, createAdminGroup, updateAdminGroup, deleteAdminGroup, assignUserToGroup,
@@ -42,11 +43,13 @@ const TenantManagement = () => {
             connMap[t.tenant_id] = cData.connectors || [];
           } catch {
             connMap[t.tenant_id] = [];
+            return;
           }
         })
       );
       setTenantConnectors(connMap);
     } catch {
+      return;
     } finally {
       setLoading(false);
     }
@@ -63,6 +66,7 @@ const TenantManagement = () => {
       await loadTenants();
     } catch {
       setConfirmDelete(null);
+      return;
     }
   };
 
@@ -84,6 +88,7 @@ const TenantManagement = () => {
       setTenantDetail({ ...data, connectors: cData.connectors || [] });
       setAdminGroups(gData.admin_groups || []);
     } catch {
+      return;
     } finally {
       setDetailLoading(false);
     }
@@ -502,7 +507,7 @@ const TenantManagement = () => {
                                           {tenantDetail.recent_incidents.map((inc) => (
                                             <tr key={inc.incident_id}>
                                               <td style={{ padding: '0.625rem 1rem', fontSize: '0.8rem', fontFamily: 'monospace', color: '#667eea', fontWeight: 600, borderBottom: '1px solid #f1f5f9' }}>
-                                                {inc.incident_id?.replace(/^INC_/i, '').toUpperCase()}
+                                                {formatIncidentId(inc.incident_id)}
                                               </td>
                                               <td style={{ padding: '0.625rem 1rem', fontSize: '0.8rem', color: '#334155', borderBottom: '1px solid #f1f5f9' }}>
                                                 {inc.type || '—'}
@@ -746,7 +751,9 @@ const TenantManagement = () => {
                                                   try {
                                                     await deleteAdminGroup(t.tenant_id, g.group_id);
                                                     setAdminGroups((prev) => prev.filter((grp) => grp.group_id !== g.group_id));
-                                                  } catch { }
+                                                  } catch {
+                                                    return;
+                                                  }
                                                   finally { setGroupBusy(''); }
                                                 }}
                                               >Delete</button>
@@ -800,7 +807,9 @@ const TenantManagement = () => {
                                                       await updateAdminGroup(t.tenant_id, g.group_id, newGroup);
                                                       setAdminGroups((prev) => prev.map((grp) => grp.group_id === g.group_id ? { ...grp, ...newGroup } : grp));
                                                       setEditingGroup(null);
-                                                    } catch { }
+                                                    } catch {
+                                                      return;
+                                                    }
                                                     finally { setGroupBusy(''); }
                                                   }}
                                                 >Save</button>
@@ -858,7 +867,9 @@ const TenantManagement = () => {
                                                 setAdminGroups((prev) => [...prev, result.group]);
                                                 setShowGroupForm(false);
                                                 setNewGroup({ display_name: '', connector_scope: [], description: '' });
-                                              } catch { }
+                                              } catch {
+                                                return;
+                                              }
                                               finally { setGroupBusy(''); }
                                             }}
                                           >Create</button>
@@ -898,7 +909,9 @@ const TenantManagement = () => {
                                                         usr.user_id === u.user_id ? { ...usr, admin_group_id: groupId } : usr
                                                       ),
                                                     }));
-                                                  } catch { }
+                                                  } catch {
+                                                    return;
+                                                  }
                                                   finally { setAssignBusy(''); }
                                                 }}
                                                 options={[
