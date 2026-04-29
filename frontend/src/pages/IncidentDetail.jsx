@@ -4,7 +4,7 @@ import { MapContainer, TileLayer, Marker, Popup, Polyline, useMap } from 'react-
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { formatUseCase } from '../utils/formatters';
-import { formatIncidentId, formatReferenceId } from '../utils/incidentIds';
+import { formatIncidentId, getDisplayReferenceId } from '../utils/incidentIds';
 import {
   getIncident,
   addUserNote,
@@ -621,7 +621,7 @@ const IncidentDetail = () => {
   const sla = incident.sla || {};
   const active = isActive(incident.status);
   const incidentType = formatUseCase(incident.incident_type || incident.classified_use_case || 'Incident');
-  const shortRef = formatReferenceId(incident.incident_id);
+  const shortRef = getDisplayReferenceId(incident);
   const agent = incident.assigned_agent;
   const statusHistory = incident.status_history || [];
   const statusColor = getStatusColor(incident.status);
@@ -939,20 +939,9 @@ const IncidentDetail = () => {
               );
             })()}
 
-            {/* Manual Report Banner */}
             {incident.structured_data?.manual_report && (
               <Card style={{ padding: '16px', background: '#ede9fe', border: '1px solid #c4b5fd' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
-                  <span style={{
-                    fontSize: '0.78rem', fontWeight: 700, color: '#5b21b6',
-                    background: '#fff', padding: '4px 12px', borderRadius: T.radiusPill,
-                    border: '1px solid #c4b5fd',
-                  }}>
-                    Manual Report
-                  </span>
-                  <span style={{ fontSize: '0.84rem', color: '#5b21b6', fontWeight: 600 }}>
-                    This incident was submitted as a manual report (no automated workflow available).
-                  </span>
                   {incident.structured_data?.severity && (
                     <span style={{
                       marginLeft: 'auto',

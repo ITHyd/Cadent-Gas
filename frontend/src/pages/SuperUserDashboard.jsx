@@ -76,45 +76,41 @@ const SuperUserDashboard = () => {
 
   useEffect(() => {
     const fetchStats = async () => {
-      try {
-        const [kbData, tenantData, trueKbData, falseKbData] = await Promise.all([
-          getKBStats(),
-          getTenants(),
-          getTrueIncidentsKB(1, 500).catch(() => ({ items: [] })),
-          getFalseIncidentsKB(1, 500).catch(() => ({ items: [] })),
-        ]);
+      const [kbResult, tenantResult, trueKbResult, falseKbResult] = await Promise.allSettled([
+        getKBStats(),
+        getTenants(),
+        getTrueIncidentsKB(1, 500),
+        getFalseIncidentsKB(1, 500),
+      ]);
 
-        const tenantList = tenantData?.tenants || [];
-        setKbStats({
-          total_true: kbData?.total_true || 0,
-          total_false: kbData?.total_false || 0,
-        });
-        setTrueKbEntries(trueKbData.items || []);
-        setFalseKbEntries(falseKbData.items || []);
-        setTenants(tenantList);
+      const kbData = kbResult.status === 'fulfilled' ? kbResult.value : { total_true: 0, total_false: 0 };
+      const tenantData = tenantResult.status === 'fulfilled' ? tenantResult.value : { tenants: [] };
+      const trueKbData = trueKbResult.status === 'fulfilled' ? trueKbResult.value : { items: [] };
+      const falseKbData = falseKbResult.status === 'fulfilled' ? falseKbResult.value : { items: [] };
 
-        const kbByTenant = {};
-        const workflowsByTenant = {};
-        await Promise.allSettled(
-          tenantList.map(async (tenant) => {
-            const [tenantKb, workflows] = await Promise.all([
-              getKBStats(tenant.tenant_id).catch(() => ({ total_true: 0, total_false: 0 })),
-              getTenantWorkflows(tenant.tenant_id).catch(() => []),
-            ]);
-            kbByTenant[tenant.tenant_id] = tenantKb;
-            workflowsByTenant[tenant.tenant_id] = Array.isArray(workflows) ? workflows : [];
-          })
-        );
-        setTenantKbStats(kbByTenant);
-        setTenantWorkflows(workflowsByTenant);
-      } catch {
-        setKbStats({ total_true: 0, total_false: 0 });
-        setTenants([]);
-        setTrueKbEntries([]);
-        setFalseKbEntries([]);
-        setTenantKbStats({});
-        setTenantWorkflows({});
-      }
+      const tenantList = tenantData?.tenants || [];
+      setKbStats({
+        total_true: kbData?.total_true || 0,
+        total_false: kbData?.total_false || 0,
+      });
+      setTrueKbEntries(trueKbData.items || []);
+      setFalseKbEntries(falseKbData.items || []);
+      setTenants(tenantList);
+
+      const kbByTenant = {};
+      const workflowsByTenant = {};
+      await Promise.allSettled(
+        tenantList.map(async (tenant) => {
+          const [tenantKb, workflows] = await Promise.all([
+            getKBStats(tenant.tenant_id).catch(() => ({ total_true: 0, total_false: 0 })),
+            getTenantWorkflows(tenant.tenant_id).catch(() => []),
+          ]);
+          kbByTenant[tenant.tenant_id] = tenantKb;
+          workflowsByTenant[tenant.tenant_id] = Array.isArray(workflows) ? workflows : [];
+        })
+      );
+      setTenantKbStats(kbByTenant);
+      setTenantWorkflows(workflowsByTenant);
     };
 
     fetchStats();
@@ -124,10 +120,10 @@ const SuperUserDashboard = () => {
     const range = getRangeBounds(dateRange, customStartDate, customEndDate);
     const previousRange = getPreviousRangeBounds(dateRange, customStartDate, customEndDate);
 
-    const filteredTenants = tenants.filter((tenant) => {
-      if (!tenant.created_at) return true;
-      return isWithinRange(tenant.created_at, range.start, range.end);
-    });
+    // Tenant/workflow portfolio metrics should reflect the current platform
+    // state, not disappear just because the records were created before the
+    // selected reporting window. Keep the time filter for dated KB analytics.
+    const filteredTenants = tenants;
     const filteredTrueKb = trueKbEntries.filter((entry) => isWithinRange(entry.created_at, range.start, range.end));
     const filteredFalseKb = falseKbEntries.filter((entry) => isWithinRange(entry.created_at, range.start, range.end));
     const previousTrueKb = trueKbEntries.filter((entry) => isWithinRange(entry.created_at, previousRange.start, previousRange.end));
@@ -135,7 +131,6 @@ const SuperUserDashboard = () => {
 
     const workflowRecords = filteredTenants.flatMap((tenant) =>
       (tenantWorkflows[tenant.tenant_id] || [])
-        .filter((workflow) => !workflow.created_at || isWithinRange(workflow.created_at, range.start, range.end))
         .map((workflow) => ({
           ...workflow,
           tenant_id: tenant.tenant_id,
@@ -194,7 +189,7 @@ const SuperUserDashboard = () => {
       bubblePoints: filteredTenants.map((tenant) => {
         const kb = tenantKbStats[tenant.tenant_id] || { total_true: 0, total_false: 0 };
         const totalKb = (kb.total_true || 0) + (kb.total_false || 0);
-        const workflowCount = (tenantWorkflows[tenant.tenant_id] || []).filter((workflow) => !workflow.created_at || isWithinRange(workflow.created_at, range.start, range.end)).length;
+        const workflowCount = (tenantWorkflows[tenant.tenant_id] || []).length;
         return {
           id: tenant.tenant_id,
           shortLabel: (tenant.display_name || tenant.tenant_id).slice(0, 3).toUpperCase(),

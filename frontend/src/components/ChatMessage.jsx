@@ -2,7 +2,12 @@ import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { formatIncidentId, formatReferenceId } from "../utils/incidentIds";
 
-const ChatMessage = ({ message, onOptionClick }) => {
+const ChatMessage = ({
+  message,
+  onOptionClick,
+  onStartNewIncident,
+  onOpenIncident,
+}) => {
   const navigate = useNavigate();
   const isAgent = message.role === "agent";
   const [isVisible, setIsVisible] = useState(false);
@@ -304,6 +309,55 @@ const ChatMessage = ({ message, onOptionClick }) => {
                   {option}
                 </button>
               ))}
+            </div>
+          )}
+
+        {isAgent &&
+          message.completed &&
+          (message.data?.incident_id || message.incident_id) && (
+            <div
+              style={{
+                display: "flex",
+                gap: "8px",
+                flexWrap: "wrap",
+                marginTop: "12px",
+              }}
+            >
+              <button
+                onClick={() =>
+                  onStartNewIncident && onStartNewIncident()
+                }
+                style={{
+                  padding: "10px 14px",
+                  backgroundColor: "#030304",
+                  border: "1px solid #030304",
+                  borderRadius: "11px",
+                  fontSize: "13px",
+                  fontWeight: "700",
+                  color: "#ffffff",
+                  cursor: "pointer",
+                }}
+              >
+                Start New Incident
+              </button>
+              <button
+                onClick={() =>
+                  onOpenIncident &&
+                  onOpenIncident(message.data?.incident_id || message.incident_id)
+                }
+                style={{
+                  padding: "10px 14px",
+                  backgroundColor: "#f8fbff",
+                  border: "1px solid #d4e1ed",
+                  borderRadius: "11px",
+                  fontSize: "13px",
+                  fontWeight: "700",
+                  color: "#19314a",
+                  cursor: "pointer",
+                }}
+              >
+                Open {formatIncidentId(message.data?.incident_id || message.incident_id)}
+              </button>
             </div>
           )}
       </div>

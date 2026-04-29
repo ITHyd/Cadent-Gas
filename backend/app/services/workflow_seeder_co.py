@@ -55,51 +55,8 @@ def _create_co_alarm_workflow(tenant_id: str) -> WorkflowDefinition:
         tenant_id=tenant_id,
         use_case=CO_ALARM,
         version=1,
-        start_node="safety_check",
+        start_node="alarm_type",
         nodes=[
-            # === PHASE 1: Immediate Safety ===
-            WorkflowNode(
-                id="safety_check",
-                type=WorkflowNodeType.QUESTION,
-                data={
-                    "question": "Are you and everyone in the property safe? Have you evacuated or moved to fresh air?",
-                    "variable": "is_safe",
-                    "options": [
-                        {"label": "Yes, we are outside/in fresh air", "score": 0},
-                        {"label": "No, still inside the property", "score": 15},
-                        {"label": "Someone is feeling unwell and cannot move", "score": 30},
-                    ]
-                },
-            ),
-            WorkflowNode(
-                id="co_symptoms",
-                type=WorkflowNodeType.QUESTION,
-                data={
-                    "question": "Is anyone experiencing any of these symptoms: headache, dizziness, nausea, breathlessness, or confusion?",
-                    "variable": "co_symptoms",
-                    "options": [
-                        {"label": "Yes - multiple people feel unwell", "score": 30},
-                        {"label": "Yes - one person feels unwell", "score": 20},
-                        {"label": "Mild headache only", "score": 10},
-                        {"label": "No symptoms at all", "score": 0},
-                    ]
-                },
-            ),
-            # Fast-track emergency check for severe symptoms
-            WorkflowNode(
-                id="check_severe_symptoms",
-                type=WorkflowNodeType.CONDITION,
-                data={"expression": "total_score >= 45"},
-            ),
-            WorkflowNode(
-                id="emergency_symptoms_outcome",
-                type=WorkflowNodeType.DECISION,
-                data={
-                    "outcome": "emergency_dispatch",
-                    "message": "EMERGENCY: CO symptoms detected. Stay outside, do NOT re-enter. Emergency engineer being dispatched. Call 999 if anyone loses consciousness."
-                },
-            ),
-
             # === PHASE 2: Alarm Identification ===
             WorkflowNode(
                 id="alarm_type",
@@ -330,12 +287,6 @@ def _create_co_alarm_workflow(tenant_id: str) -> WorkflowDefinition:
             WorkflowNode(id="gen_normal_out", type=WorkflowNodeType.DECISION, data={"group": "Other", "outcome": "close_with_guidance", "message": "Alarm appears normal. Press test button to confirm.\nIf it sounds again, call us back."}),
         ],
         edges=[
-            # Phase 1: Safety
-            WorkflowEdge(source="safety_check", target="co_symptoms"),
-            WorkflowEdge(source="co_symptoms", target="check_severe_symptoms"),
-            WorkflowEdge(source="check_severe_symptoms", target="emergency_symptoms_outcome", condition="True"),
-            WorkflowEdge(source="check_severe_symptoms", target="alarm_type", condition="False"),
-
             # Phase 2: Alarm type
             WorkflowEdge(source="alarm_type", target="check_smoke_alarm"),
             WorkflowEdge(source="check_smoke_alarm", target="smoke_alarm_guidance", condition="True"),
@@ -473,10 +424,8 @@ def _create_co_alarm_workflow(tenant_id: str) -> WorkflowDefinition:
         tenant_id=tenant_id,
         use_case=CO_ALARM,
         version=1,
-        start_node="safety_check",
+        start_node="alarm_type",
         nodes=[
-            WorkflowNode(id="safety_check", type=WorkflowNodeType.QUESTION, data={"question": "Are you and everyone in the property safe? Have you evacuated or moved to fresh air?", "variable": "is_safe", "options": [{"label": "Yes, we are outside/in fresh air", "score": 0}, {"label": "No, still inside the property", "score": 15}, {"label": "Someone is feeling unwell and cannot move", "score": 30}]}),
-            WorkflowNode(id="co_symptoms", type=WorkflowNodeType.QUESTION, data={"question": "Is anyone experiencing any of these symptoms: headache, dizziness, nausea, breathlessness, or confusion?", "variable": "co_symptoms", "options": [{"label": "Yes - multiple people feel unwell", "score": 30}, {"label": "Yes - one person feels unwell", "score": 20}, {"label": "Mild headache only", "score": 10}, {"label": "No symptoms at all", "score": 0}]}),
             WorkflowNode(id="alarm_type", type=WorkflowNodeType.QUESTION, data={"question": "What type of alarm is sounding?", "variable": "alarm_type", "options": [{"label": "CO (Carbon Monoxide) alarm", "score": 10}, {"label": "Smoke alarm", "score": 0}, {"label": "Combined smoke and CO alarm", "score": 10}, {"label": "Not sure / Don't know", "score": 5}]}),
             WorkflowNode(id="alarm_manufacturer", type=WorkflowNodeType.QUESTION, data={"question": "Can you see the brand name on the alarm?", "variable": "manufacturer", "options": [{"label": "Kidde", "score": 0}, {"label": "FireAngel", "score": 0}, {"label": "Aico", "score": 0}, {"label": "Firehawk", "score": 0}, {"label": "X-Sense", "score": 0}, {"label": "Honeywell", "score": 0}, {"label": "Google Nest", "score": 0}, {"label": "Netatmo", "score": 0}, {"label": "Cavius", "score": 0}, {"label": "Other / Cannot see", "score": 5}]}),
             WorkflowNode(id="manufacturer_switch", type=WorkflowNodeType.SWITCH, data={"variable": "manufacturer", "label": "Manufacturer Routing", "cases": ["FireAngel", "Firehawk", "Aico", "Kidde", "X-Sense", "Honeywell", "Google Nest", "Netatmo", "Cavius"], "default": "Other"}),
@@ -492,8 +441,6 @@ def _create_co_alarm_workflow(tenant_id: str) -> WorkflowDefinition:
             WorkflowNode(id="run_generic_triage", type=WorkflowNodeType.SUB_WORKFLOW, data={"label": "Generic manufacturer workflow", "workflow_id": _co_alarm_subworkflow_id(tenant_id, CO_ALARM_SUBFLOW_OTHER), "result_prefix": "manufacturer_triage"}),
         ],
         edges=[
-            WorkflowEdge(source="safety_check", target="co_symptoms"),
-            WorkflowEdge(source="co_symptoms", target="alarm_type"),
             WorkflowEdge(source="alarm_type", target="alarm_manufacturer"),
             WorkflowEdge(source="alarm_manufacturer", target="manufacturer_switch"),
             WorkflowEdge(source="manufacturer_switch", target="run_fireangel_triage", condition="manufacturer == 'FireAngel'"),

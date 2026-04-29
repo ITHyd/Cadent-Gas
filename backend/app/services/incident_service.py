@@ -114,6 +114,15 @@ class IncidentService:
         "remote": 90,
     }
 
+    # Intake-only incidents should not reserve a REF forever.
+    _NON_BLOCKING_REFERENCE_STATUSES = {
+        IncidentStatus.NEW,
+        IncidentStatus.CLASSIFYING,
+        IncidentStatus.WAITING_INPUT,
+        IncidentStatus.ANALYZING,
+        IncidentStatus.PAUSED,
+    }
+
     def __init__(self):
         # In-memory storage (in production, use database)
         self.incidents: Dict[str, Incident] = {}
@@ -258,6 +267,23 @@ class IncidentService:
         self._incident_sequence = max_existing + 1
         return f"INC-{self._incident_sequence}"
 
+    def _incident_id_from_reference_id(self, reference_id: Optional[str]) -> Optional[str]:
+        """Mirror REF-#### as INC-#### when that incident number is free."""
+        if not reference_id:
+            return None
+
+        match = re.fullmatch(r"REF-(\d+)", str(reference_id).strip().upper())
+        if not match:
+            return None
+
+        numeric_part = int(match.group(1))
+        candidate = f"INC-{numeric_part}"
+        if candidate in self.incidents:
+            return None
+
+        self._incident_sequence = max(self._incident_sequence, numeric_part)
+        return candidate
+
     async def load_tenant_users(self, db) -> None:
         """Load company/agent user_ids grouped by tenant from MongoDB.
 
@@ -381,6 +407,10 @@ class IncidentService:
         for agent in seed:
             self.agents[agent.agent_id] = agent
         logger.info(f"Seeded {len(self.agents)} field agents")
+
+    def _reference_id_blocks_reuse(self, incident: Incident) -> bool:
+        """Only progressed incidents should continue reserving a REF ID."""
+        return incident.status not in self._NON_BLOCKING_REFERENCE_STATUSES
 
     def get_agent(self, agent_id: str) -> Optional[Agent]:
         """Get agent by ID."""
@@ -848,7 +878,7 @@ class IncidentService:
         Returns:
             Created Incident object
         """
-        incident_id = self._next_incident_id()
+        incident_id = self._incident_id_from_reference_id(reference_id) or self._next_incident_id()
         
         incident = Incident(
             incident_id=incident_id,
@@ -1630,6 +1660,8 @@ class IncidentService:
             if exclude_incident_id and incident.incident_id == exclude_incident_id:
                 continue
             if tenant_id is not None and incident.tenant_id != tenant_id:
+                continue
+            if not self._reference_id_blocks_reuse(incident):
                 continue
             if (incident.reference_id or "").strip().upper() == normalized_reference:
                 return incident
