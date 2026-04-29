@@ -202,8 +202,8 @@ const AdminDashboard = () => {
         getAllAgents().catch(() => ({ agents: [] })),
         getCompanyOpsRequests(tenantId).catch(() => ({ assistance_requests: [], item_requests: [] })),
         getTenantWorkflows(tenantId).catch(() => []),
-        getTrueIncidentsKB(1, 500, tenantId).catch(() => ({ items: [] })),
-        getFalseIncidentsKB(1, 500, tenantId).catch(() => ({ items: [] })),
+        getTrueIncidentsKB(1, 100, tenantId).catch(() => ({ items: [] })),
+        getFalseIncidentsKB(1, 100, tenantId).catch(() => ({ items: [] })),
       ]);
 
       setIncidents(incidentsData.incidents || []);
@@ -326,8 +326,8 @@ const AdminDashboard = () => {
       if (!silent) {
         showToast('KB validation complete - review results below', 'info');
       }
-    } catch {
-      showToast('Failed to validate incident', 'error');
+    } catch (error) {
+      showToast(error?.message || 'Failed to validate incident', 'error');
     } finally {
       setKbReviewBusy('');
     }

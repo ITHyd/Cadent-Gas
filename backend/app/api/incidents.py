@@ -1313,10 +1313,10 @@ async def validate_incident(
     if not incident:
         raise HTTPException(status_code=404, detail="Incident not found")
 
-    if incident.status.value not in ("new", "in_progress", "pending_company_action", "false_report", "completed"):
+    if incident.status.value in ("closed",):
         raise HTTPException(
             status_code=400,
-            detail="Only reviewable incidents can be validated",
+            detail="Closed incidents cannot be re-validated",
         )
 
     kb_service = orchestrator.kb_service
