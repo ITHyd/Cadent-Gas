@@ -1003,7 +1003,14 @@ const AdminDashboard = () => {
   // â”€â”€ Incidents Tab Content â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
   const renderIncidentSwipeLane = () => {
-    const featuredIncidents = incidents.slice(0, 8);
+    const featuredIncidents = incidents
+      .slice()
+      .sort((left, right) => {
+        const leftTime = left?.created_at ? new Date(left.created_at).getTime() : 0;
+        const rightTime = right?.created_at ? new Date(right.created_at).getTime() : 0;
+        return rightTime - leftTime;
+      })
+      .slice(0, 8);
 
     if (featuredIncidents.length === 0) {
       return null;
@@ -2092,7 +2099,7 @@ const AdminDashboard = () => {
 
                     {/* User Details */}
                     <div className="panel-soft" style={{ padding: '12px 14px', borderRadius: '12px' }}>
-                      {sectionTitle('Customer Information')}
+                      {sectionTitle('Reported By')}
                       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '6px 16px', fontSize: '0.84rem' }}>
                         <div><span style={{ color: '#64748b' }}>Name:</span> <strong>{inc.user_name || 'N/A'}</strong></div>
                         <div><span style={{ color: '#64748b' }}>Phone:</span> <strong>{inc.user_phone || 'N/A'}</strong></div>

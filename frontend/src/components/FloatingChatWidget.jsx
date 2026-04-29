@@ -23,6 +23,7 @@ import ChatMessage from "./ChatMessage";
 import { formatUseCase } from "../utils/formatters";
 
 const DEFAULT_GRADIENT = "#8DE971";
+const AUTO_START_USE_CASE = "co_alarm";
 
 const formatUseCaseName = formatUseCase;
 const HIDDEN_STARTER_USE_CASES = new Set([
@@ -362,10 +363,6 @@ const FloatingChatWidget = forwardRef(function FloatingChatWidget(
 
   const promptForCustomerPhone = () => {
     setPhoneCollectionPhase(true);
-    addAgentMessage(
-      "Please enter the customer's registered phone number to look up their details.",
-      { phonePrompt: true },
-    );
   };
 
   const promptForReferenceId = ({ replace = false } = {}) => {
@@ -434,10 +431,6 @@ const FloatingChatWidget = forwardRef(function FloatingChatWidget(
       return;
     }
 
-    if (isCallCenter) {
-      promptForCustomerPhone();
-      return;
-    }
     promptForReportType();
   };
 
@@ -510,12 +503,19 @@ const FloatingChatWidget = forwardRef(function FloatingChatWidget(
       ) {
         referenceValidationPendingRef.current = false;
         setIsTyping(false);
-        if (isCallCenter && !customerDetails) {
-          promptForCustomerPhone();
-        } else {
-          promptForReportType();
+        setWorkflowStarted(true);
+        activeUseCaseRef.current = AUTO_START_USE_CASE;
+        if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+          sendStartOrResume(wsRef.current, { useCase: AUTO_START_USE_CASE });
         }
         return;
+      }
+
+      if (referenceValidationPendingRef.current && response.action === "question") {
+        referenceValidationPendingRef.current = false;
+        setIsReferenceIdPending(false);
+        setWorkflowStarted(true);
+        activeUseCaseRef.current = AUTO_START_USE_CASE;
       }
 
       if (response.action === "reference_id_exists") {
@@ -576,36 +576,21 @@ const FloatingChatWidget = forwardRef(function FloatingChatWidget(
         return;
       }
 
-      // Handle no-workflow
-      if (response.action === "no_workflow") {
-        completedRef.current = true;
+      if (response.action === "workflow_unavailable") {
+        completedRef.current = false;
         referenceValidationPendingRef.current = false;
+        setWorkflowStarted(false);
+        activeUseCaseRef.current = "";
         const noWorkflowMsg = {
           id: `msg_${Date.now()}`,
           role: "agent",
           content: response.message,
           timestamp: new Date().toISOString(),
           data: response.data || {},
-          completed: true,
+          completed: false,
         };
         setMessages((prev) => [...prev, noWorkflowMsg]);
         setIsTyping(false);
-
-        if (onNoWorkflow) {
-          setTimeout(() => onNoWorkflow(response, messages), 2500);
-        } else {
-          setTimeout(() => {
-            navigate("/report", {
-              state: {
-                manualReport: true,
-                incidentId: response.data?.incident_id || "",
-                classifiedUseCase: response.data?.classified_use_case || "",
-                description:
-                  messages.find((m) => m.role === "user")?.content || "",
-              },
-            });
-          }, 2500);
-        }
         return;
       }
 
@@ -767,6 +752,40 @@ const FloatingChatWidget = forwardRef(function FloatingChatWidget(
     };
   };
 
+  const handleOpenIncident = (incidentId) => {
+    if (!incidentId) return;
+    navigate(`/my-reports/${incidentId}`);
+  };
+
+  const handleStartNewIncident = () => {
+    manualCloseRef.current = true;
+    clearTimeout(reconnectTimerRef.current);
+    if (wsRef.current && wsRef.current.readyState <= WebSocket.OPEN) {
+      wsRef.current.close();
+    }
+    wsRef.current = null;
+    setIsConnected(false);
+    setMessages([]);
+    setInputText("");
+    setSessionId("");
+    incidentIdRef.current = "";
+    activeUseCaseRef.current = "";
+    hasStartedWorkflowRef.current = false;
+    completedRef.current = false;
+    referenceValidationPendingRef.current = false;
+    setIncidentStarted(false);
+    setWorkflowStarted(false);
+    setShowAllCategories(false);
+    setSelectedReferenceId(null);
+    setIsReferenceIdPending(false);
+    setCustomerDetails(null);
+    setPhoneCollectionPhase(false);
+    pendingFirstInputRef.current = null;
+    setTimeout(() => {
+      startIncident();
+    }, 75);
+  };
+
   const handleCategorySelect = (useCase, displayName) => {
     if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
 
@@ -780,7 +799,7 @@ const FloatingChatWidget = forwardRef(function FloatingChatWidget(
       },
     ]);
     setWorkflowStarted(true);
-    pendingFirstInputRef.current = displayName;
+    pendingFirstInputRef.current = null;
     activeUseCaseRef.current = useCase;
     sendStartOrResume(wsRef.current, { useCase });
   };
@@ -1041,7 +1060,7 @@ const FloatingChatWidget = forwardRef(function FloatingChatWidget(
                 ? isCallCenter
                   ? customerDetails
                     ? `Customer: ${customerDetails.full_name}`
-                    : "Enter customer phone to begin"
+                    : "Ready to assist you"
                   : selectedReferenceId
                     ? `REF ID: ${selectedReferenceId}`
                     : "Enter REF ID to begin"
@@ -1078,6 +1097,8 @@ const FloatingChatWidget = forwardRef(function FloatingChatWidget(
                           ? handleReferenceIdSelect
                           : handleIncidentOptionClick
                       }
+                      onStartNewIncident={handleStartNewIncident}
+                      onOpenIncident={handleOpenIncident}
                     />
                     {message.data?.reportTypePrompt &&
                       message.role === "agent" &&
@@ -1213,7 +1234,7 @@ const FloatingChatWidget = forwardRef(function FloatingChatWidget(
                     onKeyDown={handleKeyDown}
                     placeholder={
                       phoneCollectionPhase
-                        ? "Enter customer phone number..."
+                        ? "Type your message..."
                         : isReferenceIdPending
                           ? "Enter REF ID..."
                           : "Type your message..."

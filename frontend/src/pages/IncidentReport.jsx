@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { reportIncident, submitManualReport } from '../services/api';
+import { reportIncident } from '../services/api';
 import { useAuth } from '../contexts/AuthContext';
 import { formatUseCase } from '../utils/formatters';
 import { formatReferenceId } from '../utils/incidentIds';
@@ -18,9 +18,7 @@ const IncidentReport = () => {
   const navigate = useNavigate();
   const routeLocation = useLocation();
 
-  // Detect if we came from chat with a no_workflow redirect
-  const manualMode = routeLocation.state?.manualReport === true;
-  const existingIncidentId = routeLocation.state?.incidentId || null;
+  const manualMode = false;
   const prefillType = routeLocation.state?.classifiedUseCase || '';
 
   const [description, setDescription] = useState(routeLocation.state?.description || '');
@@ -425,12 +423,10 @@ const IncidentReport = () => {
             Back to Dashboard
           </button>
           <h1 className="section-heading text-3xl">
-            {manualMode ? 'Manual Incident Report' : 'Report Gas Incident'}
+            {'Report Gas Incident'}
           </h1>
           <p className="section-subheading">
-            {manualMode
-              ? 'No automated workflow is available for this issue. Please provide detailed information below so our team can review and assist you.'
-              : 'Describe what you are experiencing and the assistant will guide next steps.'}
+            {'Describe what you are experiencing and the assistant will guide next steps.'}
           </p>
 
           {manualMode && (
@@ -614,9 +610,7 @@ const IncidentReport = () => {
           >
             {loading
               ? 'Submitting...'
-              : manualMode
-                ? 'Submit Manual Report'
-                : 'Submit Report'}
+              : 'Submit Report'}
           </button>
         </form>
 

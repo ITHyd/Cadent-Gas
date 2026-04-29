@@ -21,3 +21,16 @@ export const formatReferenceId = (incidentId) => {
   if (!suffix) return "";
   return `REF-${suffix}`;
 };
+
+export const getDisplayReferenceId = (incident) => {
+  const storedReferenceId =
+    incident?.reference_id ||
+    incident?.structured_data?.reference_id ||
+    incident?.structured_data?.ref_id;
+
+  if (storedReferenceId) {
+    return String(storedReferenceId).trim().toUpperCase();
+  }
+
+  return formatReferenceId(incident?.incident_id);
+};

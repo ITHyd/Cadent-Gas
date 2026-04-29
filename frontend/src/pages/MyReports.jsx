@@ -2,7 +2,7 @@
 import { useNavigate } from 'react-router-dom';
 import { getUserIncidents } from '../services/api';
 import { useAuth } from '../contexts/AuthContext';
-import { formatReferenceId } from '../utils/incidentIds';
+import { getDisplayReferenceId } from '../utils/incidentIds';
 import CustomSelect from '../components/CustomSelect';
 import ProfileDropdown from '../components/ProfileDropdown';
 import NotificationBell from '../components/NotificationBell';
@@ -327,13 +327,10 @@ const MyReports = () => {
     );
   }
 
-  const manualReports = incidents.filter((incident) => incident.structured_data?.manual_report === true);
-
   const filterButtons = [
     { id: 'all', label: `All Reports (${incidents.length})` },
     { id: 'active', label: `Active (${incidents.filter((incident) => isActive(incident.status)).length})` },
     { id: 'resolved', label: `Resolved (${incidents.filter((incident) => ['resolved', 'completed'].includes(incident.status)).length})` },
-    { id: 'manual', label: `Manual (${manualReports.length})` },
     { id: 'true', label: `True Incidents (${trueIncidents.length})` },
     { id: 'false', label: `False Reports (${falseIncidents.length})` },
   ];
@@ -463,7 +460,7 @@ const MyReports = () => {
                           />
                         )}
                         <span style={{ fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', fontWeight: 700, fontSize: '0.82rem', color: '#37526c' }}>
-                          {formatReferenceId(incident.incident_id)}
+                          {getDisplayReferenceId(incident)}
                         </span>
                       </div>
 
@@ -480,7 +477,7 @@ const MyReports = () => {
                               fontWeight: 700,
                             }}
                           >
-                            Manual Report
+                            Special Handling
                           </span>
                         )}
 

@@ -185,8 +185,7 @@ const AgentChat = () => {
         return;
       }
 
-      // Handle no-workflow redirect to manual report form
-      if (response.action === "no_workflow") {
+      if (response.action === "workflow_unavailable") {
         const agentMessage = {
           id: `msg_${Date.now()}`,
           role: "agent",
@@ -195,20 +194,6 @@ const AgentChat = () => {
           data: response.data,
         };
         setMessages((prev) => [...prev, agentMessage]);
-        setIsComplete(true);
-
-        // Redirect to /report in manual mode after a short delay
-        setTimeout(() => {
-          navigate("/report", {
-            state: {
-              manualReport: true,
-              incidentId: response.data?.incident_id || incidentId,
-              classifiedUseCase: response.data?.classified_use_case || "",
-              description:
-                messages.find((m) => m.role === "user")?.content || "",
-            },
-          });
-        }, 2500);
         return;
       }
 

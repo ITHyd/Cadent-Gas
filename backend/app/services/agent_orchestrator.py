@@ -12,6 +12,7 @@ from app.models.incident import IncidentMedia, IncidentOutcome, IncidentStatus, 
 from app.models.session_mode import SessionMode
 from app.models.workflow import Workflow
 from app.constants.reference_ids import normalize_demo_reference_id
+from app.constants.use_cases import CO_ALARM
 from app.services.classifier import IncidentClassifier
 from app.services.incident_service import IncidentService
 from app.services.intent_detector import detect_intent
@@ -204,6 +205,32 @@ class AgentOrchestrator:
                     existing_incident.incident_id,
                 )
 
+            preselected_use_case = self.active_sessions[session_id].get("use_case") or CO_ALARM
+            self.active_sessions[session_id]["use_case"] = preselected_use_case
+            if preselected_use_case:
+                initial_description = (
+                    initial_data.get("description")
+                    or initial_data.get("incident_description")
+                    or preselected_use_case.replace("_", " ")
+                )
+                try:
+                    return await self._start_new_workflow(
+                        session_id,
+                        preselected_use_case,
+                        initial_description,
+                        {"original_type": "text"},
+                    )
+                except ValueError:
+                    logger.warning(
+                        "[%s] No workflow for pre-selected use_case='%s'. Asking user to choose another configured workflow.",
+                        session_id,
+                        preselected_use_case,
+                    )
+                    return self._build_workflow_unavailable_response(
+                        session_id,
+                        preselected_use_case,
+                    )
+
             message = "Reference ID recorded. Please describe your gas incident so I can start the workflow."
             action = "awaiting_incident_report"
             data = {"reference_id": reference_id}
@@ -226,6 +253,25 @@ class AgentOrchestrator:
             "message": message,
             "action": action,
             "data": data,
+        }
+
+    def _build_workflow_unavailable_response(
+        self,
+        session_id: str,
+        classified_use_case: str,
+    ) -> Dict[str, Any]:
+        return {
+            "session_id": session_id,
+            "message": (
+                "That issue type is not available as an automated workflow right now. "
+                "Please choose one of the configured workflow options below."
+            ),
+            "action": "workflow_unavailable",
+            "data": {
+                "classified_use_case": classified_use_case,
+                "reportTypePrompt": True,
+            },
+            "completed": False,
         }
 
     async def reconnect_session(
@@ -457,41 +503,11 @@ class AgentOrchestrator:
         try:
             return await self._start_new_workflow(session_id, classified_use_case, user_message, processed_input)
         except ValueError:
-            logger.warning(f"[{session_id}] No workflow for use_case='{classified_use_case}'. Redirecting to manual report.")
-            # Create the incident so it's persisted even without a workflow
-            self._ensure_incident(session, description=user_message)
-            incident_id = session.get("incident_id")
-            # Mark it as pending manual review
-            if incident_id:
-                self.incident_service.update_incident(
-                    incident_id,
-                    status=IncidentStatus.PENDING_COMPANY_ACTION,
-                    classified_use_case=classified_use_case,
-                )
-                self.incident_service.push_notification_to_role(
-                    "company",
-                    "Manual Report - Review Required",
-                    f"Incident {incident_id} for '{classified_use_case}' has no automated workflow. Manual report submitted.",
-                    notif_type="warning",
-                    incident_id=incident_id,
-                    link="/company",
-                    tenant_id=session.get("tenant_id"),
-                )
-            result = {
-                "session_id": session_id,
-                "message": (
-                    "We don't have an automated workflow for this type of issue yet. "
-                    "Please fill out a detailed manual report so our team can review it and take action. "
-                    "You will be redirected to the report form."
-                ),
-                "action": "no_workflow",
-                "data": {
-                    "incident_id": incident_id,
-                    "classified_use_case": classified_use_case,
-                    "redirect": "/report",
-                },
-                "completed": True,
-            }
+            logger.warning(f"[{session_id}] No workflow for use_case='{classified_use_case}'. Asking user to choose another configured workflow.")
+            result = self._build_workflow_unavailable_response(
+                session_id,
+                classified_use_case,
+            )
             transcript = session.pop("_last_transcript", None)
             if transcript:
                 result["user_transcript"] = transcript
@@ -1017,9 +1033,11 @@ class AgentOrchestrator:
         initial_description = (
             session.get("initial_data", {}).get("description")
             or session.get("initial_data", {}).get("incident_description")
+            or CO_ALARM.replace("_", " ")
         )
-        use_case = session.get("use_case")
-        if use_case and initial_description:
+        use_case = session.get("use_case") or CO_ALARM
+        session["use_case"] = use_case
+        if use_case:
             result = await self._start_new_workflow(
                 session_id=session_id,
                 use_case=use_case,
@@ -1826,6 +1844,7 @@ class AgentOrchestrator:
         message = self._format_completion_message(
             final_outcome,
             incident_id,
+            reference_id=session.get("reference_id"),
             workflow_message=data.get("decision_message"),
             workflow_outcome=workflow_outcome,
             validation_details=decision_support.get("payload"),
@@ -2071,6 +2090,7 @@ class AgentOrchestrator:
         self,
         outcome: Optional[str],
         incident_id: str,
+        reference_id: Optional[str] = None,
         workflow_message: Optional[str] = None,
         workflow_outcome: Optional[str] = None,
         validation_details: Optional[Dict[str, Any]] = None,
@@ -2078,7 +2098,7 @@ class AgentOrchestrator:
         if not outcome:
             return "Thank you for reporting. Your incident has been logged."
 
-        reference_id = incident_id.replace("INC-", "REF-", 1)
+        reference_id = reference_id or incident_id.replace("INC-", "REF-", 1)
 
         outcome_messages = {
             "emergency_dispatch": (
@@ -2254,7 +2274,17 @@ class AgentOrchestrator:
         incident_id = session.get("incident_id")
         execution_id = session.get("execution_id")
 
-        if incident_id and execution_id:
+        if execution_id:
+            self._cleanup_execution(execution_id)
+
+        if incident_id:
+            deleted = self.incident_service.delete_incident(incident_id)
+            if deleted:
+                logger.info(
+                    f"[{session_id}] Session disconnected — deleted unfinished incident {incident_id}"
+                )
+
+        if False and incident_id and execution_id:
             # Build a resumable snapshot
             execution_state = self.workflow_engine.active_executions.get(execution_id)
             snapshot = {
@@ -2276,10 +2306,11 @@ class AgentOrchestrator:
                 incident_id,
                 status=IncidentStatus.PAUSED,
                 workflow_snapshot=snapshot,
+                reference_id=None,
             )
             logger.info(
                 f"[{session_id}] Session disconnected — incident {incident_id} "
-                f"marked PAUSED with workflow snapshot"
+                f"marked PAUSED with workflow snapshot and released REF ID"
             )
 
         # Clean up the in-memory session
