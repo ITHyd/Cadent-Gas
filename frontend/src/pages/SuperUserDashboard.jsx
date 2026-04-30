@@ -120,12 +120,14 @@ const SuperUserDashboard = () => {
     const range = getRangeBounds(dateRange, customStartDate, customEndDate);
     const previousRange = getPreviousRangeBounds(dateRange, customStartDate, customEndDate);
 
-    // Tenant/workflow portfolio metrics should reflect the current platform
-    // state, not disappear just because the records were created before the
-    // selected reporting window. Keep the time filter for dated KB analytics.
+    // Portfolio metrics should reflect the current platform state. KB seed
+    // entries may be older than the selected range or lack reliable dates, so
+    // keep totals all-time and use the range only for trend movement.
     const filteredTenants = tenants;
-    const filteredTrueKb = trueKbEntries.filter((entry) => isWithinRange(entry.created_at, range.start, range.end));
-    const filteredFalseKb = falseKbEntries.filter((entry) => isWithinRange(entry.created_at, range.start, range.end));
+    const filteredTrueKb = trueKbEntries;
+    const filteredFalseKb = falseKbEntries;
+    const rangedTrueKb = trueKbEntries.filter((entry) => isWithinRange(entry.created_at, range.start, range.end));
+    const rangedFalseKb = falseKbEntries.filter((entry) => isWithinRange(entry.created_at, range.start, range.end));
     const previousTrueKb = trueKbEntries.filter((entry) => isWithinRange(entry.created_at, previousRange.start, previousRange.end));
     const previousFalseKb = falseKbEntries.filter((entry) => isWithinRange(entry.created_at, previousRange.start, previousRange.end));
 
@@ -160,8 +162,8 @@ const SuperUserDashboard = () => {
       bucketEnd.setDate(bucketStart.getDate() + Math.ceil((dateRange === '90d' ? 90 : dateRange === '7d' ? 7 : 30) / lineBucketCount) - 1);
       bucketEnd.setHours(23, 59, 59, 999);
       lineLabels.push(`${bucketStart.getDate()}/${bucketStart.getMonth() + 1}`);
-      trueSeries.push(filteredTrueKb.filter((entry) => isWithinRange(entry.created_at, bucketStart, bucketEnd)).length);
-      falseSeries.push(filteredFalseKb.filter((entry) => isWithinRange(entry.created_at, bucketStart, bucketEnd)).length);
+      trueSeries.push(rangedTrueKb.filter((entry) => isWithinRange(entry.created_at, bucketStart, bucketEnd)).length);
+      falseSeries.push(rangedFalseKb.filter((entry) => isWithinRange(entry.created_at, bucketStart, bucketEnd)).length);
     }
 
     return {
