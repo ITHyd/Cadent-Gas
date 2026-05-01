@@ -35,6 +35,33 @@ class KBService:
                 self._db = None
         return self._db
 
+    def _entry_for_storage(self, entry: Dict[str, Any]) -> Dict[str, Any]:
+        """Return a shallow copy safe for Mongo writes.
+
+        PyMongo mutates inserted dictionaries by adding `_id`; never pass the
+        in-memory KB entries directly or those ObjectIds leak into API results.
+        """
+        return {k: v for k, v in entry.items() if k != "_id"}
+
+    def _entry_for_response(self, entry: Dict[str, Any]) -> Dict[str, Any]:
+        """Return a JSON-safe KB entry for API responses."""
+        return self._json_safe(self._entry_for_storage(entry))
+
+    def _json_safe(self, value: Any) -> Any:
+        if isinstance(value, dict):
+            return {k: self._json_safe(v) for k, v in value.items() if k != "_id"}
+        if isinstance(value, list):
+            return [self._json_safe(item) for item in value]
+        if isinstance(value, datetime):
+            return value.isoformat()
+        try:
+            from bson import ObjectId
+            if isinstance(value, ObjectId):
+                return str(value)
+        except Exception:
+            pass
+        return value
+
     async def load_from_db(self):
         """Load KB entries from MongoDB. If DB has entries, use them
         instead of hard-coded defaults so manual/auto entries survive restarts."""
@@ -71,9 +98,13 @@ class KBService:
             return
         try:
             if self.true_incidents_kb:
-                await db.kb_true_incidents.insert_many(self.true_incidents_kb)
+                await db.kb_true_incidents.insert_many(
+                    [self._entry_for_storage(entry) for entry in self.true_incidents_kb]
+                )
             if self.false_incidents_kb:
-                await db.kb_false_incidents.insert_many(self.false_incidents_kb)
+                await db.kb_false_incidents.insert_many(
+                    [self._entry_for_storage(entry) for entry in self.false_incidents_kb]
+                )
             logger.info(
                 f"Seeded KB to MongoDB: {len(self.true_incidents_kb)} true, "
                 f"{len(self.false_incidents_kb)} false"
@@ -89,7 +120,7 @@ class KBService:
         try:
             col = db.kb_true_incidents if kb_type == "true" else db.kb_false_incidents
             await col.replace_one(
-                {"kb_id": entry["kb_id"]}, entry, upsert=True
+                {"kb_id": entry["kb_id"]}, self._entry_for_storage(entry), upsert=True
             )
         except Exception as e:
             logger.error(f"Failed to persist KB entry {entry.get('kb_id')}: {e}")
@@ -148,9 +179,13 @@ class KBService:
 
         try:
             if missing_true:
-                await db.kb_true_incidents.insert_many(missing_true)
+                await db.kb_true_incidents.insert_many(
+                    [self._entry_for_storage(entry) for entry in missing_true]
+                )
             if missing_false:
-                await db.kb_false_incidents.insert_many(missing_false)
+                await db.kb_false_incidents.insert_many(
+                    [self._entry_for_storage(entry) for entry in missing_false]
+                )
         except Exception as e:
             logger.error(f"Failed to persist missing KB seed entries: {e}")
 
@@ -1781,9 +1816,39 @@ class KBService:
             token in d.get("_text_blob", "")
             for token in ("low battery", "single beep every", "chirp every", "intermittent beep", "intermittent beeping")
         ),
-        "every_30_60_seconds": lambda d: "30-60" in (d.get("alarm_sound_pattern") or "") or "every 30" in (d.get("alarm_sound_pattern") or "").lower(),
+        "every_30_60_seconds": lambda d: "30-60" in (d.get("alarm_sound_pattern") or "") or "every 30" in (d.get("alarm_sound_pattern") or "").lower() or "every 60" in (d.get("alarm_sound_pattern") or "").lower(),
         "continuous_beeping": lambda d: "continuous" in (d.get("alarm_sound_pattern") or "").lower() or "non-stop" in (d.get("alarm_sound_pattern") or "").lower(),
-        "four_beep_pattern": lambda d: "4 loud beeps" in (d.get("alarm_sound_pattern") or "").lower() or "4 beeps" in (d.get("alarm_sound_pattern") or "").lower() or "4 quick beeps" in (d.get("_text_blob", "")),
+        "four_beep_pattern": lambda d: any(
+            token in (d.get("alarm_sound_pattern") or "").lower()
+            for token in ("4 loud beeps", "4 beeps", "4 quick beeps", "loud pulses", "loud alarm pulses", "co alarm pattern")
+        ) or any(
+            token in d.get("_text_blob", "")
+            for token in ("4 quick beeps", "loud pulses", "loud alarm pulses", "co alarm pattern")
+        ),
+        "alarm_memory": lambda d: any(
+            token in d.get("_text_blob", "")
+            for token in ("alarm memory", "red blink every 60", "red | 1 blink every 60", "red led blinks once every 60", "red led blinks 1 time every 60")
+        ),
+        "memory_fault": lambda d: any(
+            token in d.get("_text_blob", "")
+            for token in ("memory fault", "amber 3 blinks", "amber | 3 blinks", "amber led blinks 3 times every 30", "3 times every 30")
+        ),
+        "co_fault": lambda d: any(
+            token in d.get("_text_blob", "")
+            for token in ("co fault", "amber 5 blinks", "amber | 5 blinks", "amber led blinks 5 times every 30", "5 times every 30")
+        ),
+        "mcu_failure": lambda d: any(
+            token in d.get("_text_blob", "")
+            for token in ("mcu failure", "constant tone")
+        ),
+        "stuck_button": lambda d: any(
+            token in d.get("_text_blob", "")
+            for token in ("stuck button", "every 5 sec")
+        ),
+        "test_mode": lambda d: any(
+            token in d.get("_text_blob", "")
+            for token in ("test beep pattern", "green and amber", "test lights and beeps")
+        ),
         "alarm_stopped": lambda d: "stopped" in (d.get("alarm_sound_pattern") or "").lower(),
         "no_symptoms": lambda d: "no symptom" in (d.get("co_symptoms") or "").lower(),
         "symptoms_present": lambda d: "feel unwell" in (d.get("co_symptoms") or "").lower() or "headache" in (d.get("co_symptoms") or "").lower(),
@@ -1793,10 +1858,10 @@ class KBService:
             and "no symptom" in (d.get("co_symptoms") or "").lower()
         ) or any(
             token in d.get("_text_blob", "")
-            for token in ("battery", "low battery", "replace batteries", "battery / power issue")
+            for token in ("battery", "low battery", "replace batteries", "battery / power issue", "amber blink + chirp every 60", "amber blink every 60", "amber | 1 blink every 60")
         ),
-        "alarm_over_7_years": lambda d: "over 7" in (d.get("alarm_age") or "").lower() or "expired" in (d.get("alarm_age") or "").lower() or "end of life" in d.get("_text_blob", ""),
-        "alarm_out_of_date": lambda d: "over 7" in (d.get("alarm_age") or "").lower() or "expired" in (d.get("alarm_age") or "").lower() or "out of date" in d.get("_text_blob", "") or "end of life" in d.get("_text_blob", ""),
+        "alarm_over_7_years": lambda d: "over 7" in (d.get("alarm_age") or "").lower() or "expired" in (d.get("alarm_age") or "").lower() or "end of life" in d.get("_text_blob", "") or "2 chirps every 60" in d.get("_text_blob", "") or "amber 2 blinks every 60" in d.get("_text_blob", "") or "amber | 2 blinks every 60" in d.get("_text_blob", ""),
+        "alarm_out_of_date": lambda d: "over 7" in (d.get("alarm_age") or "").lower() or "expired" in (d.get("alarm_age") or "").lower() or "out of date" in d.get("_text_blob", "") or "end of life" in d.get("_text_blob", "") or "2 chirps every 60" in d.get("_text_blob", "") or "amber 2 blinks every 60" in d.get("_text_blob", "") or "amber | 2 blinks every 60" in d.get("_text_blob", ""),
         "alarm_5_to_7_years": lambda d: "5-7" in (d.get("alarm_age") or ""),
         "no_co_readings": lambda d: (
             "no symptom" in (d.get("co_symptoms") or "").lower()
@@ -1820,7 +1885,7 @@ class KBService:
         "smoke_alarm_type": lambda d: "smoke" in str(d.get("alarm_type") or "").lower(),
         "faulty_alarm": lambda d: any(
             token in d.get("_text_blob", "")
-            for token in ("faulty alarm", "sensor fault", "device issue", "product issue", "alarm fault", "defective alarm")
+            for token in ("faulty alarm", "sensor fault", "device issue", "product issue", "alarm fault", "defective alarm", "amber 3 blinks", "amber 5 blinks", "amber | 3 blinks", "amber | 5 blinks", "constant tone")
         ),
         "tightness_test_passed": lambda d: any(
             token in d.get("_text_blob", "")
@@ -1929,6 +1994,12 @@ class KBService:
         "is_safe_evacuated": 1.0,
         "intermittent_chirp": 1.2,
         "battery_low": 1.3,
+        "alarm_memory": 1.4,
+        "memory_fault": 1.3,
+        "co_fault": 1.3,
+        "mcu_failure": 1.3,
+        "stuck_button": 1.2,
+        "test_mode": 1.1,
         "alarm_out_of_date": 1.2,
         "alarm_over_7_years": 1.2,
         "smoke_alarm_type": 1.2,
@@ -2007,6 +2078,77 @@ class KBService:
                 if value:
                     normalized["alarm_light_colour"] = value
                     break
+        kidde_indicator_pattern = next(
+            (
+                str(value)
+                for key, value in normalized.items()
+                if key.lower().startswith("kidde")
+                and key.lower().endswith("_indicator_pattern")
+                and value not in (None, "")
+            ),
+            "",
+        )
+        kidde_visual_pattern = next(
+            (
+                str(value)
+                for key, value in normalized.items()
+                if key.lower().startswith("kidde")
+                and key.lower().endswith("_visual_pattern")
+                and value not in (None, "")
+            ),
+            "",
+        )
+        kidde_visual_colour = next(
+            (
+                str(value)
+                for key, value in normalized.items()
+                if key.lower().startswith("kidde")
+                and key.lower().endswith("_visual_colour")
+                and value not in (None, "")
+            ),
+            "",
+        )
+        kidde_visual_cadence = next(
+            (
+                str(value)
+                for key, value in normalized.items()
+                if key.lower().startswith("kidde")
+                and key.lower().endswith("_visual_cadence")
+                and value not in (None, "")
+            ),
+            "",
+        )
+        kidde_sound_pattern = next(
+            (
+                str(value)
+                for key, value in normalized.items()
+                if key.lower().startswith("kidde")
+                and key.lower().endswith("_sound_pattern")
+                and value not in (None, "")
+            ),
+            "",
+        )
+        kidde_observed_pattern = " | ".join(
+            part
+            for part in (
+                kidde_visual_colour,
+                kidde_visual_cadence,
+                kidde_visual_pattern,
+                kidde_sound_pattern,
+                kidde_indicator_pattern,
+            )
+            if part
+        )
+        if not normalized.get("alarm_light_colour") and kidde_observed_pattern:
+            pattern_lower = kidde_observed_pattern.lower()
+            if "red" in pattern_lower:
+                normalized["alarm_light_colour"] = "Red"
+            elif "amber" in pattern_lower:
+                normalized["alarm_light_colour"] = "Amber"
+            elif "green" in pattern_lower:
+                normalized["alarm_light_colour"] = "Green"
+            elif "no led" in pattern_lower or "no light" in pattern_lower:
+                normalized["alarm_light_colour"] = "No light"
         if not normalized.get("alarm_light_colour"):
             value = self._find_dynamic_answer_value(normalized, suffixes=("light", "led"))
             if value:
@@ -2019,6 +2161,10 @@ class KBService:
                 normalized["alarm_sound_pattern"] = str(normalized["fh_beeps"])
             elif normalized.get("kidde_red_sound"):
                 normalized["alarm_sound_pattern"] = str(normalized["kidde_red_sound"])
+            elif kidde_sound_pattern:
+                normalized["alarm_sound_pattern"] = kidde_sound_pattern
+            elif kidde_indicator_pattern:
+                normalized["alarm_sound_pattern"] = kidde_indicator_pattern
             elif normalized.get("gen_sound"):
                 normalized["alarm_sound_pattern"] = str(normalized["gen_sound"])
             elif normalized.get("co_alarm_status"):
@@ -2063,6 +2209,9 @@ class KBService:
             normalized.get("manufacturer_triage_outcome"),
             normalized.get("last_subworkflow_message"),
             normalized.get("last_subworkflow_outcome"),
+            kidde_observed_pattern,
+            normalized.get("kidde1_reset_result"),
+            normalized.get("kidde1_state"),
             normalized.get("resolution_summary"),
             normalized.get("notes"),
         ]
@@ -2663,7 +2812,7 @@ class KBService:
                 desc = entry.get("description", "").lower()
                 tags = " ".join(entry.get("tags", [])).lower()
                 if query_lower in desc or query_lower in tags:
-                    results.append({**entry, "kb_type": "true"})
+                    results.append({**self._entry_for_response(entry), "kb_type": "true"})
 
         # Search false incidents
         if kb_type in [None, "false"]:
@@ -2671,7 +2820,7 @@ class KBService:
                 desc = entry.get("false_positive_reason", "").lower()
                 tags = " ".join(entry.get("tags", [])).lower()
                 if query_lower in desc or query_lower in tags:
-                    results.append({**entry, "kb_type": "false"})
+                    results.append({**self._entry_for_response(entry), "kb_type": "false"})
 
         return results[:limit]
 
@@ -2852,7 +3001,7 @@ class KBService:
         pages = (total + limit - 1) // limit if limit > 0 else 1
         start = (page - 1) * limit
         end = start + limit
-        items = sorted_items[start:end]
+        items = [self._entry_for_response(entry) for entry in sorted_items[start:end]]
 
         return {
             "items": items,
@@ -2899,7 +3048,7 @@ class KBService:
         pages = (total + limit - 1) // limit if limit > 0 else 1
         start = (page - 1) * limit
         end = start + limit
-        items = sorted_items[start:end]
+        items = [self._entry_for_response(entry) for entry in sorted_items[start:end]]
 
         return {
             "items": items,
@@ -2998,11 +3147,11 @@ class KBService:
 
         for entry in self.true_incidents_kb:
             if tenant_id is None or entry.get("tenant_id") == tenant_id or entry.get("tenant_id") is None:
-                all_entries.append({**entry, "kb_type": "true"})
+                all_entries.append({**self._entry_for_response(entry), "kb_type": "true"})
 
         for entry in self.false_incidents_kb:
             if tenant_id is None or entry.get("tenant_id") == tenant_id or entry.get("tenant_id") is None:
-                all_entries.append({**entry, "kb_type": "false"})
+                all_entries.append({**self._entry_for_response(entry), "kb_type": "false"})
 
         # Sort by created_at descending
         sorted_entries = sorted(all_entries, key=lambda x: x.get("created_at", ""), reverse=True)

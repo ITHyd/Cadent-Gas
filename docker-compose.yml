@@ -5,12 +5,12 @@ services:
     restart: unless-stopped
     environment:
       MONGO_INITDB_DATABASE: gas_incident_platform
-      MONGO_INITDB_ROOT_USERNAME: mongoadmin
-      MONGO_INITDB_ROOT_PASSWORD: M0ng0Cadent2025Secure
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_ROOT_USER:-mongoadmin}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_ROOT_PASSWORD:-mongopass}
     volumes:
       - mongo_data:/data/db
     healthcheck:
-      test: ["CMD", "mongosh", "--username", "mongoadmin", "--password", "M0ng0Cadent2025Secure", "--authenticationDatabase", "admin", "--eval", "db.adminCommand('ping')"]
+      test: ["CMD", "mongosh", "--username", "${MONGO_ROOT_USER:-mongoadmin}", "--password", "${MONGO_ROOT_PASSWORD:-mongopass}", "--authenticationDatabase", "admin", "--eval", "db.adminCommand('ping')"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -23,7 +23,7 @@ services:
     env_file:
       - .env.docker
     environment:
-      MONGODB_URI: mongodb://mongoadmin:M0ng0Cadent2025Secure@mongo:27017/?authSource=admin
+      MONGODB_URI: mongodb://${MONGO_ROOT_USER:-mongoadmin}:${MONGO_ROOT_PASSWORD:-mongopass}@mongo:27017/?authSource=admin
     volumes:
       - uploads_data:/app/uploads
     ports:

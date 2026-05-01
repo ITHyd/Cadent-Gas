@@ -504,7 +504,7 @@ KIDDE_ALARM_DATA = {
     "indicators": {
         "co_detected": {
             "led": "Red LED blinks in sync with beeps",
-            "sound": "4 quick beeps every 5 seconds",
+            "sound": "Loud alarm pulses in the CO alarm pattern",
             "meaning": "CARBON MONOXIDE DETECTED - EMERGENCY",
             "action": "Evacuate immediately. Call 0800 111 999.",
         },
@@ -538,6 +538,36 @@ KIDDE_ALARM_DATA = {
             "meaning": "CO sensor fault - alarm unreliable",
             "action": "Clean alarm and press test button. Replace if fault persists.",
         },
+        "memory_fault": {
+            "led": "Amber LED blinks 3x every 30 seconds",
+            "sound": "Chirp every 30 seconds",
+            "meaning": "Memory fault",
+            "action": "Press the test button once to attempt to reset the unit.",
+        },
+        "mcu_failure": {
+            "led": "No visual indication",
+            "sound": "Constant tone",
+            "meaning": "MCU failure",
+            "action": "Replace alarm.",
+        },
+        "stuck_button": {
+            "led": "Amber LED blinks every 5 seconds",
+            "sound": "Chirp every 5 seconds",
+            "meaning": "Button may be stuck",
+            "action": "Push the button to dislodge it. Replace the unit if it cannot be unstuck.",
+        },
+        "test_mode": {
+            "led": "Green and amber LEDs illuminate; red LED blinks with the beep pattern",
+            "sound": "Test beep pattern",
+            "meaning": "Weekly test mode",
+            "action": "Perform test button press once a week to verify proper operation.",
+        },
+        "alarm_reset": {
+            "led": "Red LED continues to signal the alarm pattern until reset completes",
+            "sound": "After button push, CO alarm pattern stops",
+            "meaning": "Alarm reset confirmation",
+            "action": "If the alarm re-alarms, move to fresh air and call 0800 111 999.",
+        },
     },
     "co_thresholds": {
         "50ppm": "alarm sounds in 60-90 minutes",
@@ -569,6 +599,21 @@ KIDDE_ALARM_DATA = {
             "description": "Amber LED 5x/30s + chirps",
             "outcome": "close_with_guidance",
             "confidence": 0.88,
+        },
+        "memory_fault_pattern": {
+            "description": "Amber LED 3x/30s + chirp every 30s",
+            "outcome": "close_with_guidance",
+            "confidence": 0.88,
+        },
+        "mcu_failure_pattern": {
+            "description": "No LED + constant tone",
+            "outcome": "close_with_guidance",
+            "confidence": 0.90,
+        },
+        "stuck_button_pattern": {
+            "description": "Amber LED every 5s + chirp every 5s",
+            "outcome": "close_with_guidance",
+            "confidence": 0.90,
         },
     },
 }

@@ -427,6 +427,7 @@ def _create_co_alarm_workflow(tenant_id: str) -> WorkflowDefinition:
         start_node="alarm_type",
         nodes=[
             WorkflowNode(id="alarm_type", type=WorkflowNodeType.QUESTION, data={"question": "What type of alarm is sounding?", "variable": "alarm_type", "options": [{"label": "CO (Carbon Monoxide) alarm", "score": 10}, {"label": "Smoke alarm", "score": 0}, {"label": "Combined smoke and CO alarm", "score": 10}, {"label": "Not sure / Don't know", "score": 5}]}),
+            WorkflowNode(id="co_symptoms", type=WorkflowNodeType.QUESTION, data={"question": "Is anyone feeling unwell?", "variable": "co_symptoms", "options": [{"label": "No symptoms", "score": 0}, {"label": "Headache, dizziness, or nausea", "score": 25}, {"label": "Breathing difficulty or chest pain", "score": 40}, {"label": "Drowsy, confused, or collapsed", "score": 50}, {"label": "Pets seem unwell", "score": 20}, {"label": "Not sure", "score": 10}]}),
             WorkflowNode(id="alarm_manufacturer", type=WorkflowNodeType.QUESTION, data={"question": "Can you see the brand name on the alarm?", "variable": "manufacturer", "options": [{"label": "Kidde", "score": 0}, {"label": "FireAngel", "score": 0}, {"label": "Aico", "score": 0}, {"label": "Firehawk", "score": 0}, {"label": "X-Sense", "score": 0}, {"label": "Honeywell", "score": 0}, {"label": "Google Nest", "score": 0}, {"label": "Netatmo", "score": 0}, {"label": "Cavius", "score": 0}, {"label": "Other / Cannot see", "score": 5}]}),
             WorkflowNode(id="manufacturer_switch", type=WorkflowNodeType.SWITCH, data={"variable": "manufacturer", "label": "Manufacturer Routing", "cases": ["FireAngel", "Firehawk", "Aico", "Kidde", "X-Sense", "Honeywell", "Google Nest", "Netatmo", "Cavius"], "default": "Other"}),
             WorkflowNode(id="run_fireangel_triage", type=WorkflowNodeType.SUB_WORKFLOW, data={"label": "FireAngel manufacturer workflow", "workflow_id": _co_alarm_subworkflow_id(tenant_id, CO_ALARM_SUBFLOW_FIREANGEL), "result_prefix": "manufacturer_triage"}),
@@ -441,7 +442,8 @@ def _create_co_alarm_workflow(tenant_id: str) -> WorkflowDefinition:
             WorkflowNode(id="run_generic_triage", type=WorkflowNodeType.SUB_WORKFLOW, data={"label": "Generic manufacturer workflow", "workflow_id": _co_alarm_subworkflow_id(tenant_id, CO_ALARM_SUBFLOW_OTHER), "result_prefix": "manufacturer_triage"}),
         ],
         edges=[
-            WorkflowEdge(source="alarm_type", target="alarm_manufacturer"),
+            WorkflowEdge(source="alarm_type", target="co_symptoms"),
+            WorkflowEdge(source="co_symptoms", target="alarm_manufacturer"),
             WorkflowEdge(source="alarm_manufacturer", target="manufacturer_switch"),
             WorkflowEdge(source="manufacturer_switch", target="run_fireangel_triage", condition="manufacturer == 'FireAngel'"),
             WorkflowEdge(source="manufacturer_switch", target="run_firehawk_triage", condition="manufacturer == 'Firehawk'"),
@@ -1173,6 +1175,74 @@ def _create_co_alarm_kidde_workflow(tenant_id: str) -> WorkflowDefinition:
             {"variable": f"{prefix}_issue", "question": "What does it seem like?", "options": [{"label": "Possible CO alarm", "score": 20}, {"label": "Low battery", "score": 2}, {"label": "End of life", "score": 5}, {"label": "Fault", "score": 4}, {"label": "Normal", "score": 1}, {"label": "Not sure", "score": 6}]},
         ]
 
+    def _kidde_2030_dcr_questions(prefix: str) -> list[dict]:
+        return [
+            {
+                "variable": f"{prefix}_visual_colour",
+                "question": "What colour light do you see?",
+                "options": [
+                    {"label": "Red", "score": 25},
+                    {"label": "Amber", "score": 5},
+                    {"label": "Green", "score": 0},
+                    {"label": "No light", "score": 8},
+                    {"label": "Multiple test lights", "score": 0},
+                    {"label": "Not sure", "score": 10},
+                ],
+            },
+            {
+                "variable": f"{prefix}_visual_cadence",
+                "question": "How is the light blinking?",
+                "options": [
+                    {"label": "Alarm pattern", "score": 30},
+                    {"label": "1 blink every 60 sec", "score": 12},
+                    {"label": "1 blink every 5 sec", "score": 4},
+                    {"label": "2 blinks every 60 sec", "score": 4},
+                    {"label": "3 blinks every 30 sec", "score": 6},
+                    {"label": "5 blinks every 30 sec", "score": 10},
+                    {"label": "Steady / not blinking", "score": 2},
+                    {"label": "No visible blinking", "score": 0},
+                    {"label": "Not sure", "score": 10},
+                ],
+            },
+            {
+                "variable": f"{prefix}_sound_pattern",
+                "question": "What sound do you hear?",
+                "options": [
+                    {"label": "Loud alarm pulses", "score": 35},
+                    {"label": "No sound", "score": 8},
+                    {"label": "Chirp every 60 sec", "score": 2},
+                    {"label": "Chirp every 30 sec", "score": 5},
+                    {"label": "2 chirps every 60 sec", "score": 4},
+                    {"label": "Constant tone", "score": 8},
+                    {"label": "Chirp every 5 sec", "score": 4},
+                    {"label": "Test beep pattern", "score": 0},
+                    {"label": "Not sure", "score": 12},
+                ],
+            },
+            {
+                "variable": f"{prefix}_reset_result",
+                "question": "If the test/reset button was pressed, what happened?",
+                "options": [
+                    {"label": "It started again after reset", "score": 25},
+                    {"label": "It stopped and stayed stopped", "score": 8},
+                    {"label": "Only warning chirps remain", "score": 2},
+                    {"label": "Button still feels stuck", "score": 3},
+                    {"label": "Not pressed / not sure", "score": 8},
+                ],
+            },
+            {
+                "variable": f"{prefix}_state",
+                "question": "What best describes the alarm right now?",
+                "options": [
+                    {"label": "Alarm is sounding now", "score": 20},
+                    {"label": "Light only, no alarm sound", "score": 12},
+                    {"label": "Chirping only", "score": 3},
+                    {"label": "Normal or test only", "score": 0},
+                    {"label": "Not sure", "score": 12},
+                ],
+            },
+        ]
+
     model_specs = [
         ("kidde1", "2030-DCR"),
         ("kidde2", "K5CO"),
@@ -1225,16 +1295,39 @@ def _create_co_alarm_kidde_workflow(tenant_id: str) -> WorkflowDefinition:
 
     branch_specs: list[tuple[str, list[dict], dict, str, str]] = []
     for idx, (prefix, label) in enumerate(model_specs, start=1):
-        questions = _base_questions(prefix, label)
+        questions = _kidde_2030_dcr_questions(prefix) if label == "2030-DCR" else _base_questions(prefix, label)
+        messages = (
+            {
+                "emergency": (
+                    "Kidde 2030-DCR pattern indicates a likely live CO alarm or a re-alarm after reset.\n\n"
+                    "1. Move everyone to fresh air immediately\n"
+                    "2. Open doors and windows if safe to do so\n"
+                    "3. Do not re-enter until the property is confirmed safe\n"
+                    "4. Call 999 if anyone feels unwell\n\n"
+                    "Emergency engineer dispatched."
+                ),
+                "monitor": (
+                    "Kidde 2030-DCR pattern needs caution.\n\n"
+                    "It may be alarm memory from a CO event in the last 14 days, an unresolved fault, or an unclear alarm state. "
+                    "Ventilate the property, avoid fuel-burning appliances, and escalate immediately if the alarm pattern repeats."
+                ),
+                "guidance": (
+                    "Kidde 2030-DCR pattern fits maintenance, fault, test, or normal standby guidance.\n\n"
+                    "Follow the matched action for low battery, memory fault, CO fault, end of unit life, stuck button, or weekly test status."
+                ),
+            }
+            if label == "2030-DCR"
+            else {
+                "emergency": f"Kidde {label} score indicates a likely live CO alarm.\n\n1. Evacuate immediately\n2. Open doors and windows\n3. Do not re-enter\n4. Call 999 if anyone feels unwell\n\nEmergency engineer dispatched.",
+                "monitor": f"Kidde {label} score is inconclusive.\n\nVentilate the property, avoid fuel-burning appliances, and monitor the alarm closely.",
+                "guidance": f"Kidde {label} score fits a maintenance or non-emergency pattern.\n\nFollow the model guidance for battery, fault, end-of-life, or test status.",
+            }
+        )
         branch_specs.append(
             (
                 prefix,
                 questions,
-                {
-                    "emergency": f"Kidde {label} score indicates a likely live CO alarm.\n\n1. Evacuate immediately\n2. Open doors and windows\n3. Do not re-enter\n4. Call 999 if anyone feels unwell\n\nEmergency engineer dispatched.",
-                    "monitor": f"Kidde {label} score is inconclusive.\n\nVentilate the property, avoid fuel-burning appliances, and monitor the alarm closely.",
-                    "guidance": f"Kidde {label} score fits a maintenance or non-emergency pattern.\n\nFollow the model guidance for battery, fault, end-of-life, or test status.",
-                },
+                messages,
                 label,
                 label,
             )
