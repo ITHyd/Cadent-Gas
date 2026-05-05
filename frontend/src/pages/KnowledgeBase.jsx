@@ -48,8 +48,19 @@ const KnowledgeBase = () => {
 
   useEffect(() => {
     loadStats();
-    loadKBData();
-  }, [activeTab, currentPage, pageSize]);
+  }, [tenantId]);
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [activeTab, searchQuery]);
+
+  useEffect(() => {
+    const timeoutId = setTimeout(() => {
+      loadKBData();
+    }, 250);
+
+    return () => clearTimeout(timeoutId);
+  }, [searchQuery, activeTab, currentPage, pageSize, tenantId]);
 
   const loadStats = async () => {
     try {
@@ -63,6 +74,22 @@ const KnowledgeBase = () => {
   const loadKBData = async () => {
     setLoading(true);
     try {
+      if (searchQuery.trim()) {
+        const data = await searchKB(searchQuery.trim(), activeTab, pageSize, currentPage, tenantId);
+        const payload = {
+          items: data.results || [],
+          total: data.total || 0,
+          page: data.page || 1,
+          pages: data.pages || 1,
+        };
+        if (activeTab === 'true') {
+          setTrueIncidents(payload);
+        } else {
+          setFalseIncidents(payload);
+        }
+        return;
+      }
+
       if (activeTab === 'true') {
         const data = await getTrueIncidentsKB(currentPage, pageSize, tenantId);
         setTrueIncidents(data);
@@ -78,20 +105,11 @@ const KnowledgeBase = () => {
   };
 
   const handleSearch = async () => {
-    if (!searchQuery.trim()) { loadKBData(); return; }
-    setLoading(true);
-    try {
-      const data = await searchKB(searchQuery, activeTab, 20);
-      if (activeTab === 'true') {
-        setTrueIncidents({ items: data.results, total: data.total, page: 1, pages: 1 });
-      } else {
-        setFalseIncidents({ items: data.results, total: data.total, page: 1, pages: 1 });
-      }
-    } catch {
+    if (currentPage !== 1) {
+      setCurrentPage(1);
       return;
-    } finally {
-      setLoading(false);
     }
+    await loadKBData();
   };
 
   const handleDelete = async (kbId, kbType) => {
@@ -163,12 +181,12 @@ const KnowledgeBase = () => {
             placeholder="Search KB entries..."
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            onKeyPress={(e) => e.key === 'Enter' && handleSearch()}
+            onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
             style={styles.searchInput}
           />
           <button onClick={handleSearch} style={styles.searchButton}>Search</button>
           {searchQuery && (
-            <button onClick={() => { setSearchQuery(''); loadKBData(); }} style={{...styles.searchButton, backgroundColor: '#6b7280'}}>Clear</button>
+            <button onClick={() => { setSearchQuery(''); setCurrentPage(1); }} style={{...styles.searchButton, backgroundColor: '#6b7280'}}>Clear</button>
           )}
         </div>
         <button onClick={() => setShowAddModal(true)} style={styles.addButton}>+ Add Entry</button>

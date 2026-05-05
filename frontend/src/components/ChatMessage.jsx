@@ -1,12 +1,188 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { formatIncidentId, formatReferenceId } from "../utils/incidentIds";
+import {
+  getWorkflowOptionVisual,
+  hasWorkflowOptionVisuals,
+} from "../utils/workflowOptionImages";
+
+const WorkflowOptionButton = ({
+  option,
+  visual,
+  showVisualOptions,
+  onOptionClick,
+  onPreviewImage,
+  disabled = false,
+}) => {
+  const [imageFailed, setImageFailed] = useState(false);
+  const [showHoverLabel, setShowHoverLabel] = useState(false);
+  const hoverTimerRef = useRef(null);
+  const hideBrandText =
+    visual?.kind === "manufacturer" && visual?.imageUrl && !imageFailed;
+  const isLogoOnlyBrandCard = visual?.kind === "manufacturer" && hideBrandText;
+  const canPreviewImage = visual?.kind === "model" && !!visual?.imageUrl && !imageFailed;
+  const hasModelVisual = visual?.kind === "model" && !!visual?.imageUrl;
+  const showImageHoverCaption =
+    !!visual?.imageUrl && !imageFailed && showHoverLabel;
+  const showInlineLabel = !hideBrandText;
+
+  useEffect(() => {
+    return () => {
+      if (hoverTimerRef.current) {
+        clearTimeout(hoverTimerRef.current);
+      }
+    };
+  }, []);
+
+  const handleMouseEnter = (e) => {
+    if (disabled) return;
+    e.currentTarget.style.borderColor = "#76a0c4";
+    e.currentTarget.style.backgroundColor = "#edf5fc";
+    e.currentTarget.style.transform = "translateY(-2px) scale(1.02)";
+    e.currentTarget.style.boxShadow =
+      "0 16px 22px -20px rgba(3, 3, 4, 0.95)";
+
+    if (visual?.imageUrl && !imageFailed) {
+      hoverTimerRef.current = setTimeout(() => {
+        setShowHoverLabel(true);
+      }, 650);
+    }
+  };
+
+  const handleMouseLeave = (e) => {
+    if (disabled) return;
+    e.currentTarget.style.borderColor = "#d4e1ed";
+    e.currentTarget.style.backgroundColor = "#f8fbff";
+    e.currentTarget.style.transform = "translateY(0) scale(1)";
+    e.currentTarget.style.boxShadow =
+      "0 8px 14px -14px rgba(15, 31, 51, 0.5)";
+
+    if (hoverTimerRef.current) {
+      clearTimeout(hoverTimerRef.current);
+      hoverTimerRef.current = null;
+    }
+    setShowHoverLabel(false);
+  };
+
+  return (
+    <button
+      onClick={() => {
+        if (disabled) return;
+        if (hasModelVisual) {
+          onPreviewImage &&
+            onPreviewImage({
+              imageUrl: visual.imageUrl,
+              label: option.label,
+            });
+          return;
+        }
+        onOptionClick(option.label);
+      }}
+      disabled={disabled}
+      style={{
+        padding: showVisualOptions ? "12px" : "10px 12px",
+        backgroundColor: "#f8fbff",
+        border: "1px solid #d4e1ed",
+        borderRadius: "11px",
+        fontSize: "13px",
+        fontWeight: "600",
+        color: "#19314a",
+        cursor: disabled ? "not-allowed" : "pointer",
+        transition: "all 0.2s ease",
+        textAlign: "left",
+        boxShadow: "0 8px 14px -14px rgba(15, 31, 51, 0.5)",
+        minHeight: showVisualOptions
+          ? isLogoOnlyBrandCard
+            ? "118px"
+            : "156px"
+          : "auto",
+        display: "flex",
+        flexDirection: "column",
+        alignItems: showVisualOptions ? "stretch" : "flex-start",
+        justifyContent: isLogoOnlyBrandCard ? "center" : "flex-start",
+        gap: showVisualOptions ? (hideBrandText ? "0" : "10px") : "0",
+      }}
+      onMouseEnter={handleMouseEnter}
+      onMouseLeave={handleMouseLeave}
+    >
+      {visual?.imageUrl && !imageFailed && (
+        <div
+          onClick={(e) => {
+            if (canPreviewImage) {
+              e.stopPropagation();
+              onPreviewImage &&
+                onPreviewImage({
+                  imageUrl: visual.imageUrl,
+                  label: option.label,
+                });
+            }
+          }}
+          style={{
+            height: "82px",
+            borderRadius: "9px",
+            background: "linear-gradient(180deg, #ffffff 0%, #eef5fb 100%)",
+            border: "1px solid #dde8f2",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            overflow: "hidden",
+            padding: "8px",
+            position: "relative",
+            cursor: canPreviewImage ? "zoom-in" : "default",
+          }}
+        >
+          <img
+            src={visual.imageUrl}
+            alt={option.label}
+            onError={() => setImageFailed(true)}
+            style={{
+              width: "100%",
+              height: "100%",
+              objectFit: "contain",
+              display: "block",
+            }}
+          />
+          {showImageHoverCaption && (
+            <div
+              style={{
+                position: "absolute",
+                left: "8px",
+                right: "8px",
+                bottom: "8px",
+                background: "rgba(3, 3, 4, 0.78)",
+                color: "#ffffff",
+                borderRadius: "7px",
+                padding: "5px 7px",
+                fontSize: "11px",
+                lineHeight: "1.25",
+                textAlign: "center",
+              }}
+            >
+              {option.label}
+            </div>
+          )}
+        </div>
+      )}
+      {showInlineLabel && (
+        <span
+          style={{
+            display: "block",
+            lineHeight: "1.35",
+          }}
+        >
+          {option.label}
+        </span>
+      )}
+    </button>
+  );
+};
 
 const ChatMessage = ({
   message,
   onOptionClick,
   onStartNewIncident,
   onOpenIncident,
+  onPreviewImage,
 }) => {
   const navigate = useNavigate();
   const isAgent = message.role === "agent";
@@ -18,14 +194,19 @@ const ChatMessage = ({
     return () => clearTimeout(timer);
   }, []);
 
-  // Get options from workflow data - skip for completed messages
+  // Get options from workflow data
   // Normalize scored option objects {"label": "...", "score": N} to plain label strings
   const rawOptions =
     message.data?.options || message.data?.common_incidents || [];
-  const normalizedDataOptions = rawOptions.map((opt) =>
-    typeof opt === "object" && opt !== null && opt.label ? opt.label : opt,
+  const normalizedDataOptions = rawOptions.map((opt) => ({
+    raw: opt,
+    label: typeof opt === "object" && opt !== null && opt.label ? opt.label : opt,
+  }));
+  const messageOptions = normalizedDataOptions;
+  const showVisualOptions = hasWorkflowOptionVisuals(
+    message.data,
+    rawOptions,
   );
-  const messageOptions = message.completed ? [] : normalizedDataOptions;
 
   // Format timestamp
   const formatTime = (timestamp) => {
@@ -188,28 +369,28 @@ const ChatMessage = ({
 
   const messageBubbleStyles = isAgent
     ? {
-        padding: "13px 14px",
-        borderRadius: "14px",
-        border: "1px solid #d8e3ee",
-        background: "#ffffff",
-        boxShadow: "0 12px 24px -22px rgba(15, 31, 51, 0.45)",
-        fontSize: "15px",
-        lineHeight: "1.55",
-        color: "#162338",
-        position: "relative",
-        transition: "all 0.2s ease",
-      }
+      padding: "13px 14px",
+      borderRadius: "14px",
+      border: "1px solid #d8e3ee",
+      background: "#ffffff",
+      boxShadow: "0 12px 24px -22px rgba(15, 31, 51, 0.45)",
+      fontSize: "15px",
+      lineHeight: "1.55",
+      color: "#162338",
+      position: "relative",
+      transition: "all 0.2s ease",
+    }
     : {
-        padding: "13px 14px",
-        borderRadius: "14px",
-        border: "1px solid rgba(3, 3, 4, 0.16)",
-        background: "#030304",
-        boxShadow: "0 16px 24px -20px rgba(3, 3, 4, 0.85)",
-        fontSize: "15px",
-        lineHeight: "1.55",
-        color: "#ffffff",
-        transition: "all 0.2s ease",
-      };
+      padding: "13px 14px",
+      borderRadius: "14px",
+      border: "1px solid rgba(3, 3, 4, 0.16)",
+      background: "#030304",
+      boxShadow: "0 16px 24px -20px rgba(3, 3, 4, 0.85)",
+      fontSize: "15px",
+      lineHeight: "1.55",
+      color: "#ffffff",
+      transition: "all 0.2s ease",
+    };
 
   const timestampStyles = {
     fontSize: "11px",
@@ -274,41 +455,21 @@ const ChatMessage = ({
                 marginTop: "12px",
               }}
             >
-              {messageOptions.map((option, index) => (
-                <button
-                  key={index}
-                  onClick={() => onOptionClick(option)}
-                  style={{
-                    padding: "10px 12px",
-                    backgroundColor: "#f8fbff",
-                    border: "1px solid #d4e1ed",
-                    borderRadius: "11px",
-                    fontSize: "13px",
-                    fontWeight: "600",
-                    color: "#19314a",
-                    cursor: "pointer",
-                    transition: "all 0.2s ease",
-                    textAlign: "left",
-                    boxShadow: "0 8px 14px -14px rgba(15, 31, 51, 0.5)",
-                  }}
-                  onMouseEnter={(e) => {
-                    e.target.style.borderColor = "#76a0c4";
-                    e.target.style.backgroundColor = "#edf5fc";
-                    e.target.style.transform = "translateY(-2px) scale(1.02)";
-                    e.target.style.boxShadow =
-                      "0 16px 22px -20px rgba(3, 3, 4, 0.95)";
-                  }}
-                  onMouseLeave={(e) => {
-                    e.target.style.borderColor = "#d4e1ed";
-                    e.target.style.backgroundColor = "#f8fbff";
-                    e.target.style.transform = "translateY(0) scale(1)";
-                    e.target.style.boxShadow =
-                      "0 8px 14px -14px rgba(15, 31, 51, 0.5)";
-                  }}
-                >
-                  {option}
-                </button>
-              ))}
+              {messageOptions.map((option, index) => {
+                const visual = getWorkflowOptionVisual(message.data, option.raw);
+
+                return (
+                  <WorkflowOptionButton
+                    key={index}
+                    option={option}
+                    visual={visual}
+                    showVisualOptions={showVisualOptions}
+                    onOptionClick={onOptionClick}
+                    onPreviewImage={onPreviewImage}
+                    disabled={message.completed}
+                  />
+                );
+              })}
             </div>
           )}
 

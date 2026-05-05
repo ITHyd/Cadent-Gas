@@ -2790,8 +2790,10 @@ class KBService:
         self,
         query: str,
         kb_type: Optional[str] = None,
-        limit: int = 10
-    ) -> List[Dict[str, Any]]:
+        limit: int = 10,
+        offset: int = 0,
+        tenant_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
         """
         Search KB entries by text query
 
@@ -2799,30 +2801,76 @@ class KBService:
             query: Search text
             kb_type: "true" or "false" or None for both
             limit: Max results
+            offset: Zero-based offset for pagination
+            tenant_id: Optional tenant filter (includes global entries)
 
         Returns:
-            List of matching KB entries
+            Paginated matching KB entries
         """
         results = []
         query_lower = query.lower()
 
+        def matches_tenant(entry: Dict[str, Any]) -> bool:
+            if not tenant_id:
+                return True
+            return entry.get("tenant_id") in (None, tenant_id)
+
+        def entry_matches(entry: Dict[str, Any], text_fields: List[str]) -> bool:
+            haystacks = []
+            for field in text_fields:
+                value = entry.get(field, "")
+                if value:
+                    haystacks.append(str(value).lower())
+
+            incident_pattern = entry.get("incident_pattern") or {}
+            manufacturer = entry.get("manufacturer") or incident_pattern.get("manufacturer")
+            model = entry.get("model") or incident_pattern.get("model")
+            if manufacturer:
+                haystacks.append(str(manufacturer).lower())
+            if model:
+                haystacks.append(str(model).lower())
+
+            tags = " ".join(entry.get("tags", [])).lower()
+            if tags:
+                haystacks.append(tags)
+            use_case = entry.get("use_case") or entry.get("reported_as")
+            if use_case:
+                haystacks.append(str(use_case).replace("_", " ").lower())
+            return any(query_lower in haystack for haystack in haystacks)
+
         # Search true incidents
         if kb_type in [None, "true"]:
             for entry in self.true_incidents_kb:
-                desc = entry.get("description", "").lower()
-                tags = " ".join(entry.get("tags", [])).lower()
-                if query_lower in desc or query_lower in tags:
+                if matches_tenant(entry) and entry_matches(
+                    entry,
+                    ["description", "outcome"],
+                ):
                     results.append({**self._entry_for_response(entry), "kb_type": "true"})
 
         # Search false incidents
         if kb_type in [None, "false"]:
             for entry in self.false_incidents_kb:
-                desc = entry.get("false_positive_reason", "").lower()
-                tags = " ".join(entry.get("tags", [])).lower()
-                if query_lower in desc or query_lower in tags:
+                if matches_tenant(entry) and entry_matches(
+                    entry,
+                    ["false_positive_reason", "actual_issue"],
+                ):
                     results.append({**self._entry_for_response(entry), "kb_type": "false"})
 
-        return results[:limit]
+        results.sort(
+            key=lambda entry: str(entry.get("verified_at") or entry.get("created_at") or ""),
+            reverse=True,
+        )
+        total = len(results)
+        paged_results = results[offset:offset + limit]
+        pages = max((total + limit - 1) // limit, 1) if limit else 1
+
+        return {
+            "items": paged_results,
+            "total": total,
+            "page": (offset // limit) + 1 if limit else 1,
+            "pages": pages,
+            "limit": limit,
+        }
 
 
     def add_from_incident(

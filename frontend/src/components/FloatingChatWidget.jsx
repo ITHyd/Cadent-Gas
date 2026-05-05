@@ -69,6 +69,11 @@ const FloatingChatWidget = forwardRef(function FloatingChatWidget(
   const [showAllCategories, setShowAllCategories] = useState(false);
   const [selectedReferenceId, setSelectedReferenceId] = useState(null);
   const [isReferenceIdPending, setIsReferenceIdPending] = useState(false);
+  const [previewImage, setPreviewImage] = useState(null);
+  const [previewZoom, setPreviewZoom] = useState(1);
+  const [previewPan, setPreviewPan] = useState({ x: 0, y: 0 });
+  const [isDragging, setIsDragging] = useState(false);
+  const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
 
   // On-behalf-of-customer flow (company/call-center role)
   const isCallCenter = userRole === "company";
@@ -98,6 +103,24 @@ const FloatingChatWidget = forwardRef(function FloatingChatWidget(
       }
     },
   }));
+
+  useEffect(() => {
+    if (!previewImage) return undefined;
+
+    const handleEscape = (event) => {
+      if (event.key === "Escape") {
+        setPreviewImage(null);
+      }
+    };
+
+    window.addEventListener("keydown", handleEscape);
+    return () => window.removeEventListener("keydown", handleEscape);
+  }, [previewImage]);
+
+  useEffect(() => {
+    setPreviewZoom(1);
+    setPreviewPan({ x: 0, y: 0 });
+  }, [previewImage]);
 
   const getStyles = (gradient) => ({
     chatFab: {
@@ -190,8 +213,17 @@ const FloatingChatWidget = forwardRef(function FloatingChatWidget(
     chatSubtitle: { color: "#5f738a", fontSize: "0.8rem" },
     messagesContainer: {
       flex: 1,
+      height: "100%",
+      minHeight: 0,
       overflowY: "auto",
       padding: "1rem",
+      background: "#f5f9fd",
+    },
+    messagesPanel: {
+      flex: 1,
+      display: "flex",
+      minHeight: 0,
+      position: "relative",
       background: "#f5f9fd",
     },
     message: { marginBottom: "1rem", display: "flex", gap: "0.75rem" },
@@ -570,7 +602,7 @@ const FloatingChatWidget = forwardRef(function FloatingChatWidget(
         setTimeout(() => {
           navigate(
             response.data?.redirect ||
-              `/my-reports/${response.data?.incident_id || ""}`,
+            `/my-reports/${response.data?.incident_id || ""}`,
           );
         }, 800);
         return;
@@ -639,23 +671,23 @@ const FloatingChatWidget = forwardRef(function FloatingChatWidget(
   const effectiveUserId = customerDetails ? customerDetails.user_id : userId;
   const effectiveUserDetails = customerDetails
     ? {
-        name: customerDetails.full_name,
-        phone: customerDetails.phone,
-        address: customerDetails.address,
-      }
+      name: customerDetails.full_name,
+      phone: customerDetails.phone,
+      address: customerDetails.address,
+    }
     : {
-        name: userDetails.name || null,
-        phone: userDetails.phone || null,
-        address: userDetails.address || null,
-      };
+      name: userDetails.name || null,
+      phone: userDetails.phone || null,
+      address: userDetails.address || null,
+    };
 
   const buildInitialDataFull = (extra = {}) => ({
     ...extra,
     user_details: effectiveUserDetails,
     ...(selectedReferenceId
       ? {
-          reference_id: selectedReferenceId,
-        }
+        reference_id: selectedReferenceId,
+      }
       : {}),
     ...(customerDetails
       ? { reported_by_staff_id: userId, on_behalf: true }
@@ -680,21 +712,21 @@ const FloatingChatWidget = forwardRef(function FloatingChatWidget(
     const payload =
       shouldResume && hasStartedWorkflowRef.current
         ? {
-            type: "resume_session",
-            incident_id: incidentId,
-            tenant_id: tenantId,
-            user_id: effectiveUserId,
-            use_case: resolvedUseCase,
-            initial_data: initialData,
-          }
+          type: "resume_session",
+          incident_id: incidentId,
+          tenant_id: tenantId,
+          user_id: effectiveUserId,
+          use_case: resolvedUseCase,
+          initial_data: initialData,
+        }
         : {
-            type: "start",
-            incident_id: incidentId,
-            tenant_id: tenantId,
-            user_id: effectiveUserId,
-            use_case: resolvedUseCase,
-            initial_data: initialData,
-          };
+          type: "start",
+          incident_id: incidentId,
+          tenant_id: tenantId,
+          user_id: effectiveUserId,
+          use_case: resolvedUseCase,
+          initial_data: initialData,
+        };
 
     if (!shouldResume) {
       hasStartedWorkflowRef.current = true;
@@ -805,15 +837,27 @@ const FloatingChatWidget = forwardRef(function FloatingChatWidget(
   };
 
   const handleIncidentOptionClick = (option) => {
-    setMessages((prev) => [
-      ...prev,
-      {
-        id: `msg_${Date.now()}`,
-        role: "user",
-        content: option,
-        timestamp: new Date().toISOString(),
-      },
-    ]);
+    // Mark the last agent message with options as completed
+    setMessages((prev) => {
+      const updated = [...prev];
+      // Find the last agent message with options
+      for (let i = updated.length - 1; i >= 0; i--) {
+        if (updated[i].role === "agent" && updated[i].data?.options && !updated[i].completed) {
+          updated[i] = { ...updated[i], completed: true };
+          break;
+        }
+      }
+      // Add user's response
+      return [
+        ...updated,
+        {
+          id: `msg_${Date.now()}`,
+          role: "user",
+          content: option,
+          timestamp: new Date().toISOString(),
+        },
+      ];
+    });
 
     if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
       wsRef.current.send(
@@ -1069,155 +1113,332 @@ const FloatingChatWidget = forwardRef(function FloatingChatWidget(
           </div>
 
           {/* Messages */}
-          <div
-            style={{
-              ...styles.messagesContainer,
-            }}
-          >
-            {messages.length === 0 ? (
-              <div style={styles.emptyState}>
-                <div style={styles.emptyIcon}>💬</div>
-                <h3 style={styles.emptyTitle}>
-                  {incidentStarted ? "Connecting..." : "Start a Conversation"}
-                </h3>
-                <p style={styles.emptyText}>
-                  {incidentStarted
-                    ? "Setting up your secure connection"
-                    : 'Click "Start Incident Report" to begin'}
-                </p>
-              </div>
-            ) : (
-              <>
-                {messages.map((message) => (
-                  <React.Fragment key={message.id}>
-                    <ChatMessage
-                      message={message}
-                      onOptionClick={
-                        message.data?.refIdPrompt
-                          ? handleReferenceIdSelect
-                          : handleIncidentOptionClick
-                      }
-                      onStartNewIncident={handleStartNewIncident}
-                      onOpenIncident={handleOpenIncident}
-                    />
-                    {message.data?.reportTypePrompt &&
-                      message.role === "agent" &&
-                      !isReferenceIdPending &&
-                      !!selectedReferenceId &&
-                      !workflowStarted &&
-                      !phoneCollectionPhase && (
-                        <div style={{ marginTop: "0.5rem", maxWidth: "90%" }}>
-                          <div
-                            style={{
-                              display: "grid",
-                              gridTemplateColumns: "repeat(2, 1fr)",
-                              gap: "0.5rem",
-                            }}
-                          >
-                            {(showAllCategories
-                              ? availableWorkflows
-                              : availableWorkflows.slice(0, 6)
-                            ).map((wf) => (
-                              <button
-                                key={wf.use_case}
-                                onClick={() =>
-                                  handleCategorySelect(
-                                    wf.use_case,
-                                    formatUseCaseName(wf.use_case),
-                                  )
-                                }
-                                style={{
-                                  padding: "0.5rem 0.75rem",
-                                  backgroundColor: "white",
-                                  border: "1.5px solid #e2e8f0",
-                                  borderRadius: "0.625rem",
-                                  fontSize: "0.8rem",
-                                  fontWeight: "500",
-                                  color: "#374151",
-                                  cursor: "pointer",
-                                  transition: "all 0.2s ease",
-                                  textAlign: "center",
-                                }}
-                                onMouseEnter={(e) => {
-                                  e.currentTarget.style.borderColor = "#76a0c4";
-                                  e.currentTarget.style.backgroundColor =
-                                    "#edf5fc";
-                                  e.currentTarget.style.transform =
-                                    "translateY(-1px)";
-                                }}
-                                onMouseLeave={(e) => {
-                                  e.currentTarget.style.borderColor = "#e2e8f0";
-                                  e.currentTarget.style.backgroundColor =
-                                    "white";
-                                  e.currentTarget.style.transform =
-                                    "translateY(0)";
-                                }}
-                              >
-                                {formatUseCaseName(wf.use_case)}
-                              </button>
-                            ))}
-                          </div>
-                          {availableWorkflows.length > 6 && (
+          <div style={styles.messagesPanel}>
+            <div
+              style={{
+                ...styles.messagesContainer,
+              }}
+            >
+              {messages.length === 0 ? (
+                <div style={styles.emptyState}>
+                  <div style={styles.emptyIcon}>💬</div>
+                  <h3 style={styles.emptyTitle}>
+                    {incidentStarted ? "Connecting..." : "Start a Conversation"}
+                  </h3>
+                  <p style={styles.emptyText}>
+                    {incidentStarted
+                      ? "Setting up your secure connection"
+                      : 'Click "Start Incident Report" to begin'}
+                  </p>
+                </div>
+              ) : (
+                <>
+                  {messages.map((message) => (
+                    <React.Fragment key={message.id}>
+                      <ChatMessage
+                        message={message}
+                        onOptionClick={
+                          message.data?.refIdPrompt
+                            ? handleReferenceIdSelect
+                            : handleIncidentOptionClick
+                        }
+                        onStartNewIncident={handleStartNewIncident}
+                        onOpenIncident={handleOpenIncident}
+                        onPreviewImage={setPreviewImage}
+                      />
+                      {message.data?.reportTypePrompt &&
+                        message.role === "agent" &&
+                        !isReferenceIdPending &&
+                        !!selectedReferenceId &&
+                        !workflowStarted &&
+                        !phoneCollectionPhase && (
+                          <div style={{ marginTop: "0.5rem", maxWidth: "90%" }}>
                             <div
                               style={{
-                                display: "flex",
-                                justifyContent: "flex-end",
-                                marginTop: "0.375rem",
+                                display: "grid",
+                                gridTemplateColumns: "repeat(2, 1fr)",
+                                gap: "0.5rem",
                               }}
                             >
-                              <button
-                                onClick={() =>
-                                  setShowAllCategories(!showAllCategories)
-                                }
+                              {(showAllCategories
+                                ? availableWorkflows
+                                : availableWorkflows.slice(0, 6)
+                              ).map((wf) => (
+                                <button
+                                  key={wf.use_case}
+                                  onClick={() =>
+                                    handleCategorySelect(
+                                      wf.use_case,
+                                      formatUseCaseName(wf.use_case),
+                                    )
+                                  }
+                                  style={{
+                                    padding: "0.5rem 0.75rem",
+                                    backgroundColor: "white",
+                                    border: "1.5px solid #e2e8f0",
+                                    borderRadius: "0.625rem",
+                                    fontSize: "0.8rem",
+                                    fontWeight: "500",
+                                    color: "#374151",
+                                    cursor: "pointer",
+                                    transition: "all 0.2s ease",
+                                    textAlign: "center",
+                                  }}
+                                  onMouseEnter={(e) => {
+                                    e.currentTarget.style.borderColor = "#76a0c4";
+                                    e.currentTarget.style.backgroundColor =
+                                      "#edf5fc";
+                                    e.currentTarget.style.transform =
+                                      "translateY(-1px)";
+                                  }}
+                                  onMouseLeave={(e) => {
+                                    e.currentTarget.style.borderColor = "#e2e8f0";
+                                    e.currentTarget.style.backgroundColor =
+                                      "white";
+                                    e.currentTarget.style.transform =
+                                      "translateY(0)";
+                                  }}
+                                >
+                                  {formatUseCaseName(wf.use_case)}
+                                </button>
+                              ))}
+                            </div>
+                            {availableWorkflows.length > 6 && (
+                              <div
                                 style={{
-                                  display: "inline-flex",
-                                  alignItems: "center",
-                                  gap: "0.25rem",
-                                  padding: "0.25rem 0.625rem",
-                                  backgroundColor: "transparent",
-                                  border: "none",
-                                  fontSize: "0.7rem",
-                                  color: "#64748b",
-                                  cursor: "pointer",
-                                  transition: "all 0.2s",
-                                }}
-                                onMouseEnter={(e) => {
-                                  e.currentTarget.style.color = "#030304";
-                                }}
-                                onMouseLeave={(e) => {
-                                  e.currentTarget.style.color = "#64748b";
+                                  display: "flex",
+                                  justifyContent: "flex-end",
+                                  marginTop: "0.375rem",
                                 }}
                               >
-                                {showAllCategories
-                                  ? "Show less ▲"
-                                  : "Show more ▼"}
-                              </button>
-                            </div>
-                          )}
-                        </div>
-                      )}
-                  </React.Fragment>
-                ))}
-                {isTyping && (
-                  <div style={{ ...styles.message, ...styles.messageAgent }}>
-                    <div style={{ ...styles.avatar, ...styles.avatarAgent }}>
-                      🤖
+                                <button
+                                  onClick={() =>
+                                    setShowAllCategories(!showAllCategories)
+                                  }
+                                  style={{
+                                    display: "inline-flex",
+                                    alignItems: "center",
+                                    gap: "0.25rem",
+                                    padding: "0.25rem 0.625rem",
+                                    backgroundColor: "transparent",
+                                    border: "none",
+                                    fontSize: "0.7rem",
+                                    color: "#64748b",
+                                    cursor: "pointer",
+                                    transition: "all 0.2s",
+                                  }}
+                                  onMouseEnter={(e) => {
+                                    e.currentTarget.style.color = "#030304";
+                                  }}
+                                  onMouseLeave={(e) => {
+                                    e.currentTarget.style.color = "#64748b";
+                                  }}
+                                >
+                                  {showAllCategories
+                                    ? "Show less ▲"
+                                    : "Show more ▼"}
+                                </button>
+                              </div>
+                            )}
+                          </div>
+                        )}
+                    </React.Fragment>
+                  ))}
+                  {isTyping && (
+                    <div style={{ ...styles.message, ...styles.messageAgent }}>
+                      <div style={{ ...styles.avatar, ...styles.avatarAgent }}>
+                        🤖
+                      </div>
+                      <div
+                        style={{
+                          ...styles.messageBubble,
+                          ...styles.bubbleAgent,
+                          ...styles.typingIndicator,
+                        }}
+                      >
+                        <div style={styles.typingDot} className="typing-dot-1" />
+                        <div style={styles.typingDot} className="typing-dot-2" />
+                        <div style={styles.typingDot} className="typing-dot-3" />
+                      </div>
+                    </div>
+                  )}
+                  <div ref={messagesEndRef} />
+                </>
+              )}
+            </div>
+
+            {previewImage && (
+              <div
+                style={{
+                  position: "absolute",
+                  inset: 0,
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  padding: "16px",
+                  background:
+                    "linear-gradient(180deg, rgba(245, 249, 253, 0.72) 0%, rgba(235, 243, 250, 0.82) 100%)",
+                  backdropFilter: "blur(10px) saturate(1.08)",
+                  WebkitBackdropFilter: "blur(10px) saturate(1.08)",
+                  zIndex: 2,
+                }}
+              >
+                <div
+                  style={{
+                    width: "min(100%, 360px)",
+                    border: "1px solid #d8e3ee",
+                    borderRadius: "16px",
+                    background: "#ffffff",
+                    boxShadow: "0 18px 30px -24px rgba(15, 31, 51, 0.55)",
+                    overflow: "hidden",
+                  }}
+                >
+                  <div
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "space-between",
+                      gap: "12px",
+                      padding: "12px 14px",
+                      borderBottom: "1px solid #e3ebf3",
+                      background: "#f8fbff",
+                    }}
+                  >
+                    <div
+                      style={{
+                        fontSize: "13px",
+                        fontWeight: "700",
+                        color: "#19314a",
+                        lineHeight: "1.3",
+                      }}
+                    >
+                      {previewImage.label}
                     </div>
                     <div
                       style={{
-                        ...styles.messageBubble,
-                        ...styles.bubbleAgent,
-                        ...styles.typingIndicator,
+                        display: "flex",
+                        alignItems: "center",
+                        gap: "8px",
                       }}
                     >
-                      <div style={styles.typingDot} className="typing-dot-1" />
-                      <div style={styles.typingDot} className="typing-dot-2" />
-                      <div style={styles.typingDot} className="typing-dot-3" />
+                      <span
+                        style={{
+                          minWidth: "42px",
+                          textAlign: "center",
+                          fontSize: "11px",
+                          fontWeight: "700",
+                          color: "#526981",
+                        }}
+                      >
+                        {Math.round(previewZoom * 100)}%
+                      </span>
+                      <button
+                        onClick={() => setPreviewImage(null)}
+                        style={{
+                          width: "28px",
+                          height: "28px",
+                          borderRadius: "8px",
+                          border: "1px solid #d4e1ed",
+                          background: "#ffffff",
+                          color: "#526981",
+                          cursor: "pointer",
+                          fontSize: "16px",
+                          lineHeight: 1,
+                        }}
+                      >
+                        x
+                      </button>
                     </div>
                   </div>
-                )}
-                <div ref={messagesEndRef} />
-              </>
+                  <div
+                    style={{
+                      height: "240px",
+                      padding: "14px",
+                      background:
+                        "linear-gradient(180deg, #ffffff 0%, #eef5fb 100%)",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      overflow: "hidden",
+                      position: "relative",
+                      cursor: previewZoom > 1 ? (isDragging ? "grabbing" : "grab") : "default",
+                    }}
+                    onWheel={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+
+                      const delta = e.deltaY > 0 ? -0.1 : 0.1;
+                      setPreviewZoom((current) => {
+                        const next = Math.max(0.5, Math.min(5, current + delta));
+                        if (next === 1) {
+                          setPreviewPan({ x: 0, y: 0 });
+                        }
+                        return Number(next.toFixed(2));
+                      });
+                    }}
+                    onMouseDown={(e) => {
+                      if (previewZoom > 1) {
+                        setIsDragging(true);
+                        setDragStart({ x: e.clientX - previewPan.x, y: e.clientY - previewPan.y });
+                      }
+                    }}
+                    onMouseMove={(e) => {
+                      if (isDragging && previewZoom > 1) {
+                        setPreviewPan({
+                          x: e.clientX - dragStart.x,
+                          y: e.clientY - dragStart.y,
+                        });
+                      }
+                    }}
+                    onMouseUp={() => setIsDragging(false)}
+                    onMouseLeave={() => setIsDragging(false)}
+                  >
+                    <img
+                      src={previewImage.imageUrl}
+                      alt={previewImage.label}
+                      style={{
+                        maxWidth: "100%",
+                        maxHeight: "100%",
+                        objectFit: "contain",
+                        display: "block",
+                        transform: `scale(${previewZoom}) translate(${previewPan.x / previewZoom}px, ${previewPan.y / previewZoom}px)`,
+                        transformOrigin: "center center",
+                        transition: isDragging ? "none" : "transform 0.18s ease",
+                        userSelect: "none",
+                        pointerEvents: "none",
+                      }}
+                      draggable={false}
+                    />
+                  </div>
+                  <div
+                    style={{
+                      padding: "12px 14px 14px",
+                      borderTop: "1px solid #e3ebf3",
+                      background: "#ffffff",
+                    }}
+                  >
+                    <button
+                      onClick={() => {
+                        handleIncidentOptionClick(previewImage.label);
+                        setPreviewImage(null);
+                      }}
+                      style={{
+                        width: "100%",
+                        padding: "10px 12px",
+                        borderRadius: "10px",
+                        border: "1px solid #030304",
+                        background: "#030304",
+                        color: "#ffffff",
+                        fontSize: "13px",
+                        fontWeight: "700",
+                        cursor: "pointer",
+                      }}
+                    >
+                      Use this model
+                    </button>
+                  </div>
+                </div>
+              </div>
             )}
           </div>
 
