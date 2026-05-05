@@ -21,7 +21,7 @@ const WorkflowOptionButton = ({
     visual?.kind === "manufacturer" && visual?.imageUrl && !imageFailed;
   const isLogoOnlyBrandCard = visual?.kind === "manufacturer" && hideBrandText;
   const canPreviewImage = visual?.kind === "model" && !!visual?.imageUrl && !imageFailed;
-  const hasModelVisual = visual?.kind === "model" && !!visual?.imageUrl;
+  const hasBrandImage = visual?.kind === "manufacturer" && !!visual?.imageUrl && !imageFailed;
   const showImageHoverCaption =
     !!visual?.imageUrl && !imageFailed && showHoverLabel;
   const showInlineLabel = !hideBrandText;
@@ -34,14 +34,26 @@ const WorkflowOptionButton = ({
     };
   }, []);
 
-  const handleMouseEnter = (e) => {
+  const handleButtonMouseEnter = (e) => {
     if (disabled) return;
     e.currentTarget.style.borderColor = "#76a0c4";
     e.currentTarget.style.backgroundColor = "#edf5fc";
     e.currentTarget.style.transform = "translateY(-2px) scale(1.02)";
     e.currentTarget.style.boxShadow =
       "0 16px 22px -20px rgba(3, 3, 4, 0.95)";
+  };
 
+  const handleButtonMouseLeave = (e) => {
+    if (disabled) return;
+    e.currentTarget.style.borderColor = "#d4e1ed";
+    e.currentTarget.style.backgroundColor = "#f8fbff";
+    e.currentTarget.style.transform = "translateY(0) scale(1)";
+    e.currentTarget.style.boxShadow =
+      "0 8px 14px -14px rgba(15, 31, 51, 0.5)";
+  };
+
+  const handleImageMouseEnter = () => {
+    if (disabled) return;
     if (visual?.imageUrl && !imageFailed) {
       hoverTimerRef.current = setTimeout(() => {
         setShowHoverLabel(true);
@@ -49,14 +61,7 @@ const WorkflowOptionButton = ({
     }
   };
 
-  const handleMouseLeave = (e) => {
-    if (disabled) return;
-    e.currentTarget.style.borderColor = "#d4e1ed";
-    e.currentTarget.style.backgroundColor = "#f8fbff";
-    e.currentTarget.style.transform = "translateY(0) scale(1)";
-    e.currentTarget.style.boxShadow =
-      "0 8px 14px -14px rgba(15, 31, 51, 0.5)";
-
+  const handleImageMouseLeave = () => {
     if (hoverTimerRef.current) {
       clearTimeout(hoverTimerRef.current);
       hoverTimerRef.current = null;
@@ -64,20 +69,32 @@ const WorkflowOptionButton = ({
     setShowHoverLabel(false);
   };
 
+  const handleImageClick = (e) => {
+    e.stopPropagation();
+    if (disabled) return;
+
+    // For model images: open preview
+    if (canPreviewImage) {
+      onPreviewImage &&
+        onPreviewImage({
+          imageUrl: visual.imageUrl,
+          label: option.label,
+        });
+    }
+    // For brand images: select the option (same as clicking button)
+    else if (hasBrandImage) {
+      onOptionClick(option.label);
+    }
+  };
+
+  const handleButtonClick = () => {
+    if (disabled) return;
+    onOptionClick(option.label);
+  };
+
   return (
     <button
-      onClick={() => {
-        if (disabled) return;
-        if (hasModelVisual) {
-          onPreviewImage &&
-            onPreviewImage({
-              imageUrl: visual.imageUrl,
-              label: option.label,
-            });
-          return;
-        }
-        onOptionClick(option.label);
-      }}
+      onClick={handleButtonClick}
       disabled={disabled}
       style={{
         padding: showVisualOptions ? "12px" : "10px 12px",
@@ -102,21 +119,14 @@ const WorkflowOptionButton = ({
         justifyContent: isLogoOnlyBrandCard ? "center" : "flex-start",
         gap: showVisualOptions ? (hideBrandText ? "0" : "10px") : "0",
       }}
-      onMouseEnter={handleMouseEnter}
-      onMouseLeave={handleMouseLeave}
+      onMouseEnter={handleButtonMouseEnter}
+      onMouseLeave={handleButtonMouseLeave}
     >
       {visual?.imageUrl && !imageFailed && (
         <div
-          onClick={(e) => {
-            if (canPreviewImage) {
-              e.stopPropagation();
-              onPreviewImage &&
-                onPreviewImage({
-                  imageUrl: visual.imageUrl,
-                  label: option.label,
-                });
-            }
-          }}
+          onClick={handleImageClick}
+          onMouseEnter={handleImageMouseEnter}
+          onMouseLeave={handleImageMouseLeave}
           style={{
             height: "82px",
             borderRadius: "9px",
@@ -128,7 +138,7 @@ const WorkflowOptionButton = ({
             overflow: "hidden",
             padding: "8px",
             position: "relative",
-            cursor: canPreviewImage ? "zoom-in" : "default",
+            cursor: canPreviewImage ? "zoom-in" : "pointer",
           }}
         >
           <img
@@ -140,6 +150,7 @@ const WorkflowOptionButton = ({
               height: "100%",
               objectFit: "contain",
               display: "block",
+              pointerEvents: "none",
             }}
           />
           {showImageHoverCaption && (
@@ -156,6 +167,7 @@ const WorkflowOptionButton = ({
                 fontSize: "11px",
                 lineHeight: "1.25",
                 textAlign: "center",
+                pointerEvents: "none",
               }}
             >
               {option.label}
