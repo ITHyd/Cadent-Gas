@@ -1729,12 +1729,14 @@ class IncidentService:
     def _matches_connector_scope(incident: "Incident", scope: List[str]) -> bool:
         """Check if an incident matches the user's connector scope.
 
-        - external_ref is None (portal/chatbot incident) → matches if "portal" in scope
+        - external_ref is None (portal/chatbot incident) → ALWAYS matches (portal incidents always visible)
         - external_ref.connector_type present → matches if that type is in scope
         """
         ext_ref = incident.external_ref
+        # Portal/chatbot incidents (no external_ref) are ALWAYS visible
         if ext_ref is None or not ext_ref.get("connector_type"):
-            return "portal" in scope
+            return True
+        # Connector incidents only visible if in scope
         return ext_ref.get("connector_type") in scope
 
     def get_company_incidents(
@@ -1934,9 +1936,16 @@ class IncidentService:
         ]
         
         total = len(tenant_incidents)
-        new_count = sum(1 for inc in tenant_incidents if inc.status in (
-            IncidentStatus.NEW, IncidentStatus.CLASSIFYING, IncidentStatus.ANALYZING,
-        ))
+        
+        # NEW count: Portal/chatbot incidents created in last 24 hours
+        now = datetime.utcnow()
+        twenty_four_hours_ago = now - timedelta(hours=24)
+        new_count = sum(
+            1 for inc in tenant_incidents 
+            if (inc.external_ref is None or not inc.external_ref.get("connector_type"))
+            and inc.created_at >= twenty_four_hours_ago
+        )
+        
         in_progress = sum(1 for inc in tenant_incidents if inc.status in (
             IncidentStatus.IN_PROGRESS, IncidentStatus.WAITING_INPUT, IncidentStatus.PAUSED,
         ))

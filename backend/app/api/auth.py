@@ -20,6 +20,16 @@ class RefreshTokenRequest(BaseModel):
 SENSITIVE_FIELDS = {"_id", "password_hash"}
 
 
+def _normalize_company_connector_scope(scope: list) -> list:
+    """Ensure company users keep visibility of portal/chatbot incidents."""
+    if not scope:
+        return []
+    normalized = list(dict.fromkeys(scope))
+    if "portal" not in normalized:
+        normalized.append("portal")
+    return normalized
+
+
 async def _enrich_user_with_scope(user: dict) -> dict:
     """Resolve connector_scope from the user's admin_group_id and tenant's admin_groups.
 
@@ -41,7 +51,9 @@ async def _enrich_user_with_scope(user: dict) -> dict:
 
     for group in tenant.get("admin_groups") or []:
         if group.get("group_id") == user["admin_group_id"]:
-            user["_connector_scope"] = group.get("connector_scope", [])
+            user["_connector_scope"] = _normalize_company_connector_scope(
+                group.get("connector_scope", [])
+            )
             return user
 
     # Group not found (stale reference) — treat as general admin

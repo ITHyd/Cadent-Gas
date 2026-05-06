@@ -613,7 +613,7 @@ async def seed_tenants():
                 AdminGroup(
                     group_id="grp_sn_team",
                     display_name="ServiceNow Team",
-                    connector_scope=["servicenow"],
+                    connector_scope=["servicenow", "portal"],
                     description="Manages incidents synced from ServiceNow",
                     created_at=now,
                 ),

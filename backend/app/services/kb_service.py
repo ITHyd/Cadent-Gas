@@ -1335,8 +1335,17 @@ class KBService:
         false_support = self._support_score(all_false_matches)
         true_specificity = len((true_match or {}).get("matched_tags", [])) + len(((true_match or {}).get("pattern_fields")) or {})
         false_specificity = len((false_match or {}).get("matched_tags", [])) + len(((false_match or {}).get("pattern_fields")) or {})
+        workflow_outcome = str(incident_pattern.get("workflow_outcome") or "").strip().lower()
+        no_kb_match = (
+            not all_true_matches
+            and not all_false_matches
+            and true_score == 0.0
+            and false_score == 0.0
+        )
 
-        if true_score > false_score:
+        if no_kb_match:
+            choose_true = workflow_outcome in {"emergency_dispatch", "monitor"}
+        elif true_score > false_score:
             choose_true = True
         elif false_score > true_score:
             choose_true = False
@@ -1356,7 +1365,12 @@ class KBService:
             best_match_id = true_match["kb_id"] if true_match else None
             winning_confidence = true_score
             confidence_adj = min(0.3, max(0.0, (true_score - 0.5) * 0.6))  # +0 to +0.3
-            if true_score == false_score and true_support != false_support:
+            if no_kb_match:
+                explanation = (
+                    "No strong true or false KB match was found; classified as true "
+                    f"because workflow outcome was '{workflow_outcome or 'unknown'}'."
+                )
+            elif true_score == false_score and true_support != false_support:
                 explanation = (
                     f"Overall true and false similarity tied at {true_score:.2f}; "
                     f"classified as true because true-side support ({true_support:.2f}) "
@@ -1388,7 +1402,12 @@ class KBService:
             best_match_id = false_match["kb_id"] if false_match else None
             winning_confidence = false_score
             confidence_adj = -min(0.3, max(0.0, (false_score - 0.5) * 0.6))  # -0.3 to -0
-            if true_score == false_score and false_support == true_support and false_specificity >= true_specificity:
+            if no_kb_match:
+                explanation = (
+                    "No strong true or false KB match was found; classified as false "
+                    f"because workflow outcome was '{workflow_outcome or 'unknown'}'."
+                )
+            elif true_score == false_score and false_support == true_support and false_specificity >= true_specificity:
                 explanation = (
                     f"Overall true and false similarity tied at {false_score:.2f}; "
                     f"classified as false because support and specificity did not clearly exceed the false side"
