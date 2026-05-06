@@ -2166,6 +2166,7 @@ const AdminDashboard = () => {
                       </div>
                     )}
 
+
                     {/* KB Validation */}
                     {kbVal && (() => {
                       const rawVerdict = (kbVal.verdict || kbVal.best_match_type || inc.kb_match_type || 'unknown').toString().toLowerCase();
