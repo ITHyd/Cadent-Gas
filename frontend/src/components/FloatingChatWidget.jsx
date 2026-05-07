@@ -374,6 +374,11 @@ const FloatingChatWidget = forwardRef(function FloatingChatWidget(
   }, []);
 
   const addAgentMessage = (content, data = {}) => {
+    // Hide connecting message when first agent message arrives
+    if (incidentStarted) {
+      setIncidentStarted(false);
+    }
+
     setMessages((prev) => [
       ...prev,
       {
@@ -756,8 +761,10 @@ const FloatingChatWidget = forwardRef(function FloatingChatWidget(
       reconnectAttemptsRef.current = 0;
       if (reconnect && hasStartedWorkflowRef.current) {
         sendStartOrResume(ws, { shouldResume: true });
-      } else {
-        promptForReferenceId({ replace: messages.length === 0 });
+      } else if (!hasStartedWorkflowRef.current) {
+        // Auto-start session when WebSocket connects
+        // Backend will generate RefID and send first message
+        sendStartOrResume(ws, { useCase: AUTO_START_USE_CASE || "" });
       }
     };
 

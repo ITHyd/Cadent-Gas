@@ -859,6 +859,7 @@ class IncidentService:
         structured_data: Optional[Dict[str, Any]] = None,
         reference_id: Optional[str] = None,
         reported_by_staff_id: Optional[str] = None,
+        created_at: Optional[datetime] = None,
     ) -> Incident:
         """
         Create a new incident
@@ -874,11 +875,15 @@ class IncidentService:
             location: Location description
             geo_location: {"lat": float, "lng": float}
             structured_data: Extracted structured variables
+            created_at: Custom creation timestamp (defaults to current time)
         
         Returns:
             Created Incident object
         """
         incident_id = self._incident_id_from_reference_id(reference_id) or self._next_incident_id()
+        
+        # Use provided timestamp or current UTC time (for consistency across timezones)
+        creation_time = created_at if created_at else datetime.utcnow()
         
         incident = Incident(
             incident_id=incident_id,
@@ -898,7 +903,7 @@ class IncidentService:
             structured_data=structured_data or {},
             status_history=[{
                 "status": "reported",
-                "timestamp": datetime.utcnow().isoformat(),
+                "timestamp": creation_time.isoformat(),
                 "message": (
                     f"Incident reported by staff {reported_by_staff_id} on behalf of user"
                     if reported_by_staff_id
@@ -912,8 +917,8 @@ class IncidentService:
             backup_agents=[],
             agent_location_history=[],
             media=[],
-            created_at=datetime.utcnow(),
-            updated_at=datetime.utcnow()
+            created_at=creation_time,
+            updated_at=creation_time
         )
 
         self.incidents[incident_id] = incident

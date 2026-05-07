@@ -47,6 +47,7 @@ const FILTER_TO_STATUS = {
 
 const filterCompanyIncidentsByTab = (incidents, filter) => {
   const items = Array.isArray(incidents) ? incidents : [];
+  let filtered = [];
 
   switch (filter) {
     case 'new':
@@ -54,32 +55,37 @@ const filterCompanyIncidentsByTab = (incidents, filter) => {
       const now = new Date();
       const twentyFourHoursAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000);
 
-      const newIncidents = items.filter((incident) => {
+      filtered = items.filter((incident) => {
         const isPortalIncident = !incident.external_ref || !incident.external_ref.connector_type;
         const createdAt = new Date(incident.created_at);
         const isRecent = createdAt >= twentyFourHoursAgo;
 
         return isPortalIncident && isRecent;
       });
-
-      // Sort by created_at descending (most recent first)
-      newIncidents.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
-
-      return newIncidents;
+      break;
     case 'in_progress':
-      return items.filter((incident) => ['in_progress', 'waiting_input', 'paused'].includes(incident.status));
+      filtered = items.filter((incident) => ['in_progress', 'waiting_input', 'paused'].includes(incident.status));
+      break;
     case 'pending':
-      return items.filter((incident) => incident.status === 'pending_company_action');
+      filtered = items.filter((incident) => incident.status === 'pending_company_action');
+      break;
     case 'dispatched':
-      return items.filter((incident) => incident.status === 'dispatched');
+      filtered = items.filter((incident) => incident.status === 'dispatched');
+      break;
     case 'resolved':
-      return items.filter((incident) => incident.status === 'resolved');
+      filtered = items.filter((incident) => incident.status === 'resolved');
+      break;
     case 'completed':
-      return items.filter((incident) => incident.status === 'completed');
+      filtered = items.filter((incident) => incident.status === 'completed');
+      break;
     case 'all':
     default:
-      return items;
+      filtered = items;
+      break;
   }
+
+  // Sort all filtered results by created_at descending (most recent first)
+  return filtered.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
 };
 
 const paginationBtnStyle = {
@@ -157,6 +163,71 @@ const AdminDashboard = () => {
   const [refreshing, setRefreshing] = useState(false);
 
   const [mainTab, setMainTab] = useState('home');
+
+  const formatDateForExcel = (dateString) => {
+    if (!dateString) return '';
+
+    const date = new Date(dateString);
+    const day = String(date.getDate()).padStart(2, '0');
+    const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    const month = monthNames[date.getMonth()];
+    const year = date.getFullYear();
+    const hours = String(date.getHours()).padStart(2, '0');
+    const minutes = String(date.getMinutes()).padStart(2, '0');
+
+    return `${day}-${month}-${year} ${hours}:${minutes}`;
+  };
+
+  const exportIncidentsToExcel = () => {
+    if (incidents.length === 0) return;
+
+    // Sort incidents by created_at descending (latest first)
+    const sortedIncidents = [...incidents].sort((a, b) =>
+      new Date(b.created_at) - new Date(a.created_at)
+    );
+
+    // Prepare data for export
+    const exportData = sortedIncidents.map(incident => ({
+      'Reference ID': incident.reference_id || 'N/A',
+      'Incident ID': incident.incident_id,
+      'Reported By': incident.user_name || incident.user_phone || 'N/A',
+      'Workflow Classification': incident.outcome || 'Pending',
+      'KB Classification': incident.kb_match_type || 'N/A',
+      'Status': incident.status,
+      'Created At': formatDateForExcel(incident.created_at)
+    }));
+
+    // Convert to CSV
+    const headers = Object.keys(exportData[0]);
+    const csvContent = [
+      headers.join(','),
+      ...exportData.map(row =>
+        headers.map(header => {
+          const value = row[header];
+          // Escape commas and quotes in values
+          if (typeof value === 'string' && (value.includes(',') || value.includes('"'))) {
+            return `"${value.replace(/"/g, '""')}"`;
+          }
+          return value;
+        }).join(',')
+      )
+    ].join('\n');
+
+    // Create blob and download
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement('a');
+    const url = URL.createObjectURL(blob);
+
+    const timestamp = new Date().toISOString().slice(0, 10);
+    const filename = `company_incidents_${filter}_${timestamp}.csv`;
+
+    link.setAttribute('href', url);
+    link.setAttribute('download', filename);
+    link.style.visibility = 'hidden';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
   const [filter, setFilter] = useState('all');
   const [dateRange, setDateRange] = useState('30d');
   const [customStartDate, setCustomStartDate] = useState('');
@@ -537,12 +608,13 @@ const AdminDashboard = () => {
   const formatDateTime = (value) => {
     if (!value) return 'N/A';
 
-    return new Date(value).toLocaleDateString('en-GB', {
+    return new Date(value).toLocaleString('en-GB', {
       day: '2-digit',
       month: 'short',
       year: 'numeric',
       hour: '2-digit',
       minute: '2-digit',
+      hour12: false
     });
   };
 
@@ -1391,9 +1463,23 @@ const AdminDashboard = () => {
             ))}
           </div>
 
-          <button type="button" className="secondary-btn" onClick={() => fetchData({ background: true })}>
-            {refreshing ? 'Refreshing...' : 'Refresh Data'}
-          </button>
+          <div style={{ display: 'flex', gap: '10px' }}>
+            <button type="button" className="secondary-btn" onClick={() => fetchData({ background: true })}>
+              {refreshing ? 'Refreshing...' : 'Refresh Data'}
+            </button>
+            <button
+              type="button"
+              className="secondary-btn"
+              onClick={exportIncidentsToExcel}
+              disabled={incidents.length === 0}
+              style={{
+                opacity: incidents.length === 0 ? 0.6 : 1,
+                cursor: incidents.length === 0 ? 'not-allowed' : 'pointer'
+              }}
+            >
+              📥 Export
+            </button>
+          </div>
         </div>
 
         <div style={{ marginBottom: '14px' }}>
