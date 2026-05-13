@@ -18,6 +18,17 @@ from app.core.auth_dependencies import get_current_user
 router = APIRouter()
 classifier = IncidentClassifier()
 
+
+def _normalize_company_connector_scope(scope: Optional[List[str]]) -> List[str]:
+    """Ensure company dashboards can see portal/chatbot incidents too."""
+    if not scope:
+        return []
+    normalized = list(dict.fromkeys(scope))
+    if "portal" not in normalized:
+        normalized.append("portal")
+    return normalized
+
+
 def get_orchestrator():
     """Get shared orchestrator instance from agents module"""
     from app.api.agents import agent_orchestrator
@@ -1032,7 +1043,9 @@ async def get_company_ops_requests(
 
         connector_scope = []
         if role == "company":
-            connector_scope = current_user.get("connector_scope", [])
+            connector_scope = _normalize_company_connector_scope(
+                current_user.get("connector_scope", [])
+            )
 
         status_filter = [s.strip().upper() for s in status.split(",")] if status else None
         data = orchestrator.incident_service.get_company_ops_requests(
@@ -1068,7 +1081,9 @@ async def get_company_incidents(
         # Resolve connector scope: super_user/admin = [] (all), company = from JWT
         connector_scope = []
         if role == "company":
-            connector_scope = current_user.get("connector_scope", [])
+            connector_scope = _normalize_company_connector_scope(
+                current_user.get("connector_scope", [])
+            )
 
         # Parse status filter
         status_filter = None
@@ -1105,7 +1120,9 @@ async def get_company_stats(
 
         connector_scope = []
         if role == "company":
-            connector_scope = current_user.get("connector_scope", [])
+            connector_scope = _normalize_company_connector_scope(
+                current_user.get("connector_scope", [])
+            )
 
         stats = orchestrator.get_incident_stats(tenant_id, connector_scope)
         stats["connector_scope"] = connector_scope
@@ -1313,39 +1330,29 @@ async def validate_incident(
     if not incident:
         raise HTTPException(status_code=404, detail="Incident not found")
 
-    if incident.status.value not in ("new", "in_progress", "pending_company_action", "false_report", "completed"):
+    if incident.status.value in ("closed",):
         raise HTTPException(
             status_code=400,
-            detail="Only reviewable incidents can be validated",
+            detail="Closed incidents cannot be re-validated",
         )
 
     kb_service = orchestrator.kb_service
     use_case = incident.incident_type or incident.classified_use_case or ""
     structured_data = dict(incident.structured_data or {})
-    stored_pattern = incident.incident_pattern or structured_data.get("_incident_pattern")
-    if stored_pattern:
-        incident_pattern = dict(stored_pattern)
-        incident_pattern["incident_id"] = incident.incident_id
-        if not incident_pattern.get("use_case"):
-            incident_pattern["use_case"] = use_case
-        if not incident_pattern.get("workflow_outcome"):
-            incident_pattern["workflow_outcome"] = getattr(incident.outcome, "value", incident.outcome)
-        kb_result = kb_service.verify_incident_pattern(incident_pattern)
-    else:
-        incident_data = dict(structured_data)
-        incident_data.update(
-            {
-                "incident_id": incident.incident_id,
-                "description": incident.description or incident_data.get("description", ""),
-                "location": incident.location or incident_data.get("location"),
-                "incident_type": incident.incident_type or incident_data.get("incident_type"),
-            }
-        )
-        kb_result = kb_service.verify_incident(
-            incident_data,
-            use_case,
-            workflow_outcome=getattr(incident.outcome, "value", incident.outcome),
-        )
+    incident_data = dict(structured_data)
+    incident_data.update(
+        {
+            "incident_id": incident.incident_id,
+            "description": incident.description or incident_data.get("description", ""),
+            "location": incident.location or incident_data.get("location"),
+            "incident_type": incident.incident_type or incident_data.get("incident_type"),
+        }
+    )
+    kb_result = kb_service.verify_incident(
+        incident_data,
+        use_case,
+        workflow_outcome=getattr(incident.outcome, "value", incident.outcome),
+    )
 
     structured_data["_kb_validation"] = {
         "verdict": kb_result.get("best_match_type", "unknown"),
@@ -1432,6 +1439,17 @@ async def mark_incident_false(
     incident_service._add_status_history(
         incident, "false_report", "Incident marked as false report by reviewer"
     )
+    incident_service.update_incident(
+        incident_id,
+        status=incident.status,
+        outcome=incident.outcome,
+        resolution_notes=incident.resolution_notes,
+        kb_match_type=incident.kb_match_type,
+        kb_similarity_score=incident.kb_similarity_score,
+        kb_validation_details=incident.kb_validation_details,
+        structured_data=incident.structured_data,
+        updated_at=incident.updated_at,
+    )
 
     # Trigger outbound sync to external system (SAP / ServiceNow)
     synced = False
@@ -1469,7 +1487,7 @@ async def confirm_incident_valid(
     if not incident:
         raise HTTPException(status_code=404, detail="Incident not found")
 
-    if incident.status.value not in ("new", "in_progress", "false_report", "pending_company_action"):
+    if incident.status.value not in ("new", "in_progress", "false_report", "pending_company_action", "completed"):
         raise HTTPException(
             status_code=400,
             detail="Only reviewable incidents can be confirmed",
@@ -1516,6 +1534,15 @@ async def confirm_incident_valid(
         incident,
         "pending_company_action",
         "Incident confirmed as valid by reviewer after KB review",
+    )
+    incident_service.update_incident(
+        incident_id,
+        status=incident.status,
+        kb_match_type=incident.kb_match_type,
+        kb_similarity_score=incident.kb_similarity_score,
+        kb_validation_details=incident.kb_validation_details,
+        structured_data=incident.structured_data,
+        updated_at=incident.updated_at,
     )
 
     return {

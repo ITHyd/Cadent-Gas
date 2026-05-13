@@ -79,8 +79,8 @@ const SuperUserDashboard = () => {
       const [kbResult, tenantResult, trueKbResult, falseKbResult] = await Promise.allSettled([
         getKBStats(),
         getTenants(),
-        getTrueIncidentsKB(1, 500),
-        getFalseIncidentsKB(1, 500),
+        getTrueIncidentsKB(1, 100),
+        getFalseIncidentsKB(1, 100),
       ]);
 
       const kbData = kbResult.status === 'fulfilled' ? kbResult.value : { total_true: 0, total_false: 0 };

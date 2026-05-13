@@ -1335,8 +1335,17 @@ class KBService:
         false_support = self._support_score(all_false_matches)
         true_specificity = len((true_match or {}).get("matched_tags", [])) + len(((true_match or {}).get("pattern_fields")) or {})
         false_specificity = len((false_match or {}).get("matched_tags", [])) + len(((false_match or {}).get("pattern_fields")) or {})
+        workflow_outcome = str(incident_pattern.get("workflow_outcome") or "").strip().lower()
+        no_kb_match = (
+            not all_true_matches
+            and not all_false_matches
+            and true_score == 0.0
+            and false_score == 0.0
+        )
 
-        if true_score > false_score:
+        if no_kb_match:
+            choose_true = workflow_outcome in {"emergency_dispatch", "monitor"}
+        elif true_score > false_score:
             choose_true = True
         elif false_score > true_score:
             choose_true = False
@@ -1356,7 +1365,12 @@ class KBService:
             best_match_id = true_match["kb_id"] if true_match else None
             winning_confidence = true_score
             confidence_adj = min(0.3, max(0.0, (true_score - 0.5) * 0.6))  # +0 to +0.3
-            if true_score == false_score and true_support != false_support:
+            if no_kb_match:
+                explanation = (
+                    "No strong true or false KB match was found; classified as true "
+                    f"because workflow outcome was '{workflow_outcome or 'unknown'}'."
+                )
+            elif true_score == false_score and true_support != false_support:
                 explanation = (
                     f"Overall true and false similarity tied at {true_score:.2f}; "
                     f"classified as true because true-side support ({true_support:.2f}) "
@@ -1388,7 +1402,12 @@ class KBService:
             best_match_id = false_match["kb_id"] if false_match else None
             winning_confidence = false_score
             confidence_adj = -min(0.3, max(0.0, (false_score - 0.5) * 0.6))  # -0.3 to -0
-            if true_score == false_score and false_support == true_support and false_specificity >= true_specificity:
+            if no_kb_match:
+                explanation = (
+                    "No strong true or false KB match was found; classified as false "
+                    f"because workflow outcome was '{workflow_outcome or 'unknown'}'."
+                )
+            elif true_score == false_score and false_support == true_support and false_specificity >= true_specificity:
                 explanation = (
                     f"Overall true and false similarity tied at {false_score:.2f}; "
                     f"classified as false because support and specificity did not clearly exceed the false side"
@@ -2790,8 +2809,10 @@ class KBService:
         self,
         query: str,
         kb_type: Optional[str] = None,
-        limit: int = 10
-    ) -> List[Dict[str, Any]]:
+        limit: int = 10,
+        offset: int = 0,
+        tenant_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
         """
         Search KB entries by text query
 
@@ -2799,30 +2820,76 @@ class KBService:
             query: Search text
             kb_type: "true" or "false" or None for both
             limit: Max results
+            offset: Zero-based offset for pagination
+            tenant_id: Optional tenant filter (includes global entries)
 
         Returns:
-            List of matching KB entries
+            Paginated matching KB entries
         """
         results = []
         query_lower = query.lower()
 
+        def matches_tenant(entry: Dict[str, Any]) -> bool:
+            if not tenant_id:
+                return True
+            return entry.get("tenant_id") in (None, tenant_id)
+
+        def entry_matches(entry: Dict[str, Any], text_fields: List[str]) -> bool:
+            haystacks = []
+            for field in text_fields:
+                value = entry.get(field, "")
+                if value:
+                    haystacks.append(str(value).lower())
+
+            incident_pattern = entry.get("incident_pattern") or {}
+            manufacturer = entry.get("manufacturer") or incident_pattern.get("manufacturer")
+            model = entry.get("model") or incident_pattern.get("model")
+            if manufacturer:
+                haystacks.append(str(manufacturer).lower())
+            if model:
+                haystacks.append(str(model).lower())
+
+            tags = " ".join(entry.get("tags", [])).lower()
+            if tags:
+                haystacks.append(tags)
+            use_case = entry.get("use_case") or entry.get("reported_as")
+            if use_case:
+                haystacks.append(str(use_case).replace("_", " ").lower())
+            return any(query_lower in haystack for haystack in haystacks)
+
         # Search true incidents
         if kb_type in [None, "true"]:
             for entry in self.true_incidents_kb:
-                desc = entry.get("description", "").lower()
-                tags = " ".join(entry.get("tags", [])).lower()
-                if query_lower in desc or query_lower in tags:
+                if matches_tenant(entry) and entry_matches(
+                    entry,
+                    ["description", "outcome"],
+                ):
                     results.append({**self._entry_for_response(entry), "kb_type": "true"})
 
         # Search false incidents
         if kb_type in [None, "false"]:
             for entry in self.false_incidents_kb:
-                desc = entry.get("false_positive_reason", "").lower()
-                tags = " ".join(entry.get("tags", [])).lower()
-                if query_lower in desc or query_lower in tags:
+                if matches_tenant(entry) and entry_matches(
+                    entry,
+                    ["false_positive_reason", "actual_issue"],
+                ):
                     results.append({**self._entry_for_response(entry), "kb_type": "false"})
 
-        return results[:limit]
+        results.sort(
+            key=lambda entry: str(entry.get("verified_at") or entry.get("created_at") or ""),
+            reverse=True,
+        )
+        total = len(results)
+        paged_results = results[offset:offset + limit]
+        pages = max((total + limit - 1) // limit, 1) if limit else 1
+
+        return {
+            "items": paged_results,
+            "total": total,
+            "page": (offset // limit) + 1 if limit else 1,
+            "pages": pages,
+            "limit": limit,
+        }
 
 
     def add_from_incident(

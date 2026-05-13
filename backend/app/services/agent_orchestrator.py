@@ -112,7 +112,12 @@ class AgentOrchestrator:
         initial_data: Dict[str, Any],
     ) -> str:
         session_id = str(uuid.uuid4())
-        reference_id = normalize_demo_reference_id(initial_data.get("reference_id"))
+        # Get current timestamp for consistency (using UTC time for consistency across timezones)
+        creation_time = datetime.utcnow()
+        
+        # Auto-generate unique reference ID using the same timestamp
+        reference_id = self._generate_unique_reference_id(tenant_id, creation_time)
+        
         structured_data = {}
         if reference_id:
             structured_data["reference_id"] = reference_id
@@ -137,17 +142,48 @@ class AgentOrchestrator:
             "last_question_data": None,
             "validation_notice_sent": False,
             "reference_id": reference_id,
-            "awaiting_reference_id": not bool(reference_id),
+            "awaiting_reference_id": False,  # Changed: No longer waiting for user input
             "switch_count": 0,
             "switch_timestamps": [],
             "consecutive_unclear_count": 0,
             "mode_history": [],
             "conversation_history": [],
             "structured_data": structured_data,
-            "created_at": datetime.utcnow(),
+            "created_at": creation_time,  # Use same timestamp as RefID
         }
         self._schedule_persist_session(session_id)
         return session_id
+    
+    def _generate_unique_reference_id(self, tenant_id: str, creation_time: datetime = None) -> str:
+        """Generate a unique reference ID for the incident"""
+        import random
+        import string
+        from datetime import datetime
+        
+        # Use provided timestamp or current UTC time
+        timestamp = creation_time if creation_time else datetime.utcnow()
+        
+        # Format: REF-YYYYMMDDHHMMSS (e.g., REF-20260507140945 for May 7, 2026 at 14:09:45)
+        datetime_part = timestamp.strftime("%Y%m%d%H%M%S")
+        reference_id = f"REF-{datetime_part}"
+        
+        # Check if it already exists (extremely rare - same second)
+        existing = self.incident_service.get_incident_by_reference_id(
+            reference_id, tenant_id=tenant_id
+        )
+        if existing:
+            # Add random suffix if collision (multiple incidents in same second)
+            random_suffix = ''.join(random.choices(string.digits, k=2))
+            reference_id = f"REF-{datetime_part}{random_suffix}"
+            # Check again with suffix
+            existing = self.incident_service.get_incident_by_reference_id(
+                reference_id, tenant_id=tenant_id
+            )
+            if existing:
+                # Extremely rare - regenerate completely
+                return self._generate_unique_reference_id(tenant_id, timestamp)
+        
+        return reference_id
 
     # ╔══════════════════════════════════════════════════════════════════════╗
     # ║  SESSION LIFECYCLE                                                  ║
@@ -166,6 +202,13 @@ class AgentOrchestrator:
         session_id = self._create_session_record(incident_id, tenant_id, user_id, initial_data)
         reference_id = self.active_sessions[session_id]["reference_id"]
 
+        # Get user's first name for personalized greeting
+        user_details = initial_data.get("user_details", {})
+        full_name = user_details.get("name", "")
+        # Extract first name from full name
+        first_name = full_name.split()[0] if full_name and full_name.strip() else ""
+        greeting = f"Hello {first_name}! " if first_name else "Hello! "
+
         # Check if the user has paused incidents they can resume
         paused = self.incident_service.get_paused_incidents(user_id, tenant_id)
         if paused:
@@ -177,7 +220,7 @@ class AgentOrchestrator:
                 incident_ids.append(inc.incident_id)
 
             message = (
-                "Welcome back! You have unfinished reports:\n"
+                f"{greeting}Welcome back! You have unfinished reports:\n"
                 + "\n".join(f"• {n}" for n in names)
                 + "\n\nWould you like to continue one of these, or start a new report?"
             )
@@ -231,16 +274,10 @@ class AgentOrchestrator:
                         preselected_use_case,
                     )
 
-            message = "Reference ID recorded. Please describe your gas incident so I can start the workflow."
+            # Reference ID is auto-generated, show personalized greeting
+            message = f"{greeting}I'm here to help you report a gas-related incident. Please describe what's happening, or select a category above to get started."
             action = "awaiting_incident_report"
             data = {"reference_id": reference_id}
-        else:
-            message = "Please enter the REF ID before we begin."
-            action = "reference_id_prompt"
-            data = {
-                "refIdPrompt": True,
-                "reference_id_prompt": True,
-            }
 
         self._add_to_history(
             session_id,
@@ -871,14 +908,14 @@ class AgentOrchestrator:
         message = (
             f"Existing incident found for Reference ID {reference_id}.\n"
             f"Incident ID: {existing_incident_id}\n\n"
-            "Would you like to open the existing incident or re-enter another REF ID?"
+            "Would you like to open the existing incident or start a new one?"
         )
         data = {
             "reference_id_exists": True,
             "reference_id": reference_id,
             "incident_id": existing_incident_id,
             "redirect": f"/my-reports/{existing_incident_id}",
-            "options": ["Open Existing Incident", "Re-enter REF ID"],
+            "options": ["Open Existing Incident", "Start New Incident"],
         }
         self._add_to_history(
             session_id,
@@ -922,7 +959,7 @@ class AgentOrchestrator:
             "completed": False,
         }
 
-    def _handle_reference_match_choice(
+    async def _handle_reference_match_choice(
         self,
         session_id: str,
         user_message: str,
@@ -932,7 +969,7 @@ class AgentOrchestrator:
         lower = user_message.strip().lower()
 
         wants_open = "open" in lower or "existing" in lower or "use" in lower
-        wants_reenter = "re-enter" in lower or "reenter" in lower or "another" in lower
+        wants_new = "new" in lower or "start" in lower
 
         if wants_open and pending.get("incident_id"):
             incident_id = pending["incident_id"]
@@ -973,11 +1010,39 @@ class AgentOrchestrator:
                 "completed": True,
             }
 
-        if wants_reenter:
-            return self._prompt_for_reference_id(
-                session_id,
-                message="Please enter another REF ID to continue.",
+        if wants_new:
+            # Generate a new unique RefID and start fresh workflow
+            new_reference_id = self._generate_unique_reference_id(session["tenant_id"])
+            session["reference_id"] = new_reference_id
+            session["pending_reference_match"] = None
+            
+            # Get the use case and start workflow
+            preselected_use_case = session.get("use_case") or CO_ALARM
+            session["use_case"] = preselected_use_case
+            
+            initial_description = (
+                session.get("initial_data", {}).get("description")
+                or session.get("initial_data", {}).get("incident_description")
+                or preselected_use_case.replace("_", " ")
             )
+            
+            try:
+                return await self._start_new_workflow(
+                    session_id,
+                    preselected_use_case,
+                    initial_description,
+                    {"original_type": "text"},
+                )
+            except ValueError:
+                logger.warning(
+                    "[%s] No workflow for use_case='%s'. Asking user to choose another configured workflow.",
+                    session_id,
+                    preselected_use_case,
+                )
+                return self._build_workflow_unavailable_response(
+                    session_id,
+                    preselected_use_case,
+                )
 
         return self._build_reference_exists_response(
             session_id,
@@ -990,90 +1055,18 @@ class AgentOrchestrator:
         session_id: str,
         user_message: str,
     ) -> Optional[Dict[str, Any]]:
-        """Capture the reference ID before the normal chat flow begins."""
+        """
+        Legacy method - Reference IDs are now auto-generated.
+        This method only handles existing incident matching.
+        """
         session = self.active_sessions[session_id]
+        
+        # Handle pending reference match choice (open existing or re-enter)
         if session.get("pending_reference_match"):
             return self._handle_reference_match_choice(session_id, user_message)
 
-        if not session.get("awaiting_reference_id"):
-            return None
-
-        reference_id = normalize_demo_reference_id(user_message)
-        if reference_id is None:
-            return self._prompt_for_reference_id(
-                session_id,
-                message="Please enter a valid REF ID to continue.",
-            )
-
-        existing_incident = self.incident_service.get_incident_by_reference_id(
-            reference_id,
-            tenant_id=session.get("tenant_id"),
-            exclude_incident_id=session.get("incident_id"),
-        )
-        if existing_incident:
-            return self._build_reference_exists_response(
-                session_id,
-                reference_id,
-                existing_incident.incident_id,
-            )
-
-        session["reference_id"] = reference_id
-        session["awaiting_reference_id"] = False
-        session["structured_data"]["reference_id"] = reference_id
-        session.setdefault("initial_data", {})["reference_id"] = reference_id
-
-        incident_id = session.get("incident_id")
-        if incident_id and self.incident_service.get_incident(incident_id):
-            self.incident_service.update_incident(
-                incident_id,
-                reference_id=reference_id,
-                structured_data=session.get("structured_data", {}),
-            )
-
-        initial_description = (
-            session.get("initial_data", {}).get("description")
-            or session.get("initial_data", {}).get("incident_description")
-            or CO_ALARM.replace("_", " ")
-        )
-        use_case = session.get("use_case") or CO_ALARM
-        session["use_case"] = use_case
-        if use_case:
-            result = await self._start_new_workflow(
-                session_id=session_id,
-                use_case=use_case,
-                user_message=initial_description,
-                processed_input={
-                    "text": initial_description,
-                    "original_type": "text",
-                    "confidence": 1.0,
-                    "metadata": {},
-                },
-            )
-            result["message"] = (
-                f"Reference ID {reference_id} recorded.\n\n{result['message']}"
-            )
-            return result
-
-        message = (
-            f"Reference ID {reference_id} recorded. "
-            "Please describe your gas incident so I can start the workflow."
-        )
-        data = {
-            "reference_id": reference_id,
-            "awaiting_incident_report": True,
-        }
-        self._add_to_history(
-            session_id,
-            "agent",
-            {"message": message, "action": "awaiting_incident_report", "data": data},
-        )
-        return {
-            "session_id": session_id,
-            "message": message,
-            "action": "awaiting_incident_report",
-            "data": data,
-            "completed": False,
-        }
+        # Reference IDs are auto-generated, no longer waiting for user input
+        return None
 
     async def _start_new_workflow(
         self, session_id: str, use_case: str,
@@ -1107,11 +1100,29 @@ class AgentOrchestrator:
         self._ensure_incident(session, description=user_message)
 
         engine_response = await self.workflow_engine.continue_execution(state.execution_id, None)
-        return await self._handle_engine_response(
+        result = await self._handle_engine_response(
             session_id=session_id,
             engine_response=engine_response,
             input_type=processed_input.get("original_type", "text"),
         )
+        
+        # Add personalized greeting to the first workflow question (only once)
+        # Check if greeting hasn't been shown yet AND this is truly the first workflow start
+        # (not a reprompt after invalid input)
+        if not session.get("greeting_shown", False):
+            user_details = session.get("initial_data", {}).get("user_details", {})
+            full_name = user_details.get("name", "")
+            first_name = full_name.split()[0] if full_name and full_name.strip() else ""
+            
+            if first_name:
+                greeting = f"Hello {first_name}! I'm here to help you report this incident.\n\n"
+                result["message"] = greeting + result["message"]
+            
+            # Mark greeting as shown so it never appears again in this session
+            session["greeting_shown"] = True
+            self._schedule_persist_session(session_id)
+        
+        return result
 
     async def _continue_current_workflow(
         self, session_id: str, user_message: str, processed_input: Dict[str, Any],
@@ -1792,7 +1803,8 @@ class AgentOrchestrator:
             "final_outcome": final_outcome,
         }
         session["structured_data"] = structured_data
-        self.kb_service.add_incident_pattern(incident_pattern)
+        # Removed: No longer storing incident patterns automatically
+        # self.kb_service.add_incident_pattern(incident_pattern)
 
         # ── Finalize incident ─────────────────────────────────────────
         if incident_id and outcome_enum:
@@ -1944,6 +1956,7 @@ class AgentOrchestrator:
             structured_data=session.get("structured_data", {}),
             reference_id=session.get("reference_id"),
             reported_by_staff_id=session.get("reported_by_staff_id"),
+            created_at=session.get("created_at"),  # Use session creation time for consistency
         )
         session["incident_id"] = incident.incident_id
         return incident.incident_id

@@ -210,7 +210,8 @@ const MyReports = () => {
       );
     }
 
-    return result;
+    // Sort by created_at descending (latest first)
+    return result.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
   }, [incidents, filter, searchQuery]);
 
   const totalPages = Math.max(1, Math.ceil(filteredIncidents.length / pageSize));
@@ -231,13 +232,76 @@ const MyReports = () => {
   const formatDate = (dateString) => {
     if (!dateString) return 'N/A';
 
-    return new Date(dateString).toLocaleDateString('en-GB', {
+    return new Date(dateString).toLocaleString('en-GB', {
       day: '2-digit',
       month: 'short',
       year: 'numeric',
       hour: '2-digit',
       minute: '2-digit',
+      hour12: false
     });
+  };
+
+  const formatDateForExcel = (dateString) => {
+    if (!dateString) return '';
+
+    const date = new Date(dateString);
+    const day = String(date.getDate()).padStart(2, '0');
+    const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    const month = monthNames[date.getMonth()];
+    const year = date.getFullYear();
+    const hours = String(date.getHours()).padStart(2, '0');
+    const minutes = String(date.getMinutes()).padStart(2, '0');
+
+    // Format: DD-Mon-YYYY HH:MM (e.g., 07-May-2026 14:09)
+    return `${day}-${month}-${year} ${hours}:${minutes}`;
+  };
+
+  const exportToExcel = () => {
+    if (filteredIncidents.length === 0) return;
+
+    // Incidents are already sorted by created_at descending in filteredIncidents
+    // Prepare data for export (only required columns)
+    const exportData = filteredIncidents.map(incident => ({
+      'Reference ID': getDisplayReferenceId(incident),
+      'Incident ID': incident.incident_id,
+      'Reported By': incident.user_name || incident.user_phone || 'N/A',
+      'Workflow Classification': incident.outcome || 'Pending',
+      'KB Classification': incident.kb_match_type || 'N/A',
+      'Status': getStatusLabel(incident.status),
+      'Created At': formatDateForExcel(incident.created_at)
+    }));
+
+    // Convert to CSV
+    const headers = Object.keys(exportData[0]);
+    const csvContent = [
+      headers.join(','),
+      ...exportData.map(row =>
+        headers.map(header => {
+          const value = row[header];
+          // Escape commas and quotes in values
+          if (typeof value === 'string' && (value.includes(',') || value.includes('"'))) {
+            return `"${value.replace(/"/g, '""')}"`;
+          }
+          return value;
+        }).join(',')
+      )
+    ].join('\n');
+
+    // Create blob and download
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement('a');
+    const url = URL.createObjectURL(blob);
+
+    const timestamp = new Date().toISOString().slice(0, 10);
+    const filename = `incidents_${filter}_${timestamp}.csv`;
+
+    link.setAttribute('href', url);
+    link.setAttribute('download', filename);
+    link.style.visibility = 'hidden';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
   };
 
   const formatTimeAgo = (dateString) => {
@@ -345,12 +409,14 @@ const MyReports = () => {
         <header className="panel" style={{ padding: '22px', marginBottom: '16px' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '16px', flexWrap: 'wrap' }}>
             <div>
-              <span className="eyebrow">Reporter Portal</span>
-              <h1 className="page-heading" style={{ marginTop: '11px' }}>My Reports</h1>
+              <a href="/dashboard" className="secondary-btn" style={{ marginBottom: '16px', display: 'inline-block' }}>
+                ← Back to Dashboard
+              </a>
+              <h1 className="page-heading" style={{ marginTop: '0' }}>My Reports</h1>
               <p className="page-subheading">Track incident progress, estimated resolution, and dispatch status in one place.</p>
             </div>
 
-            <div style={{ display: 'flex', gap: '10px', alignSelf: 'center' }}>
+            <div style={{ display: 'flex', gap: '10px', alignSelf: 'flex-start' }}>
               <button
                 onClick={fetchIncidents}
                 className="secondary-btn"
@@ -366,9 +432,21 @@ const MyReports = () => {
                 <span style={{ fontSize: '1rem' }}>🔄</span>
                 {loading ? 'Refreshing...' : 'Refresh'}
               </button>
-              <a href="/dashboard" className="secondary-btn">
-                Back to Dashboard
-              </a>
+              <button
+                onClick={exportToExcel}
+                className="secondary-btn"
+                disabled={filteredIncidents.length === 0}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  opacity: filteredIncidents.length === 0 ? 0.6 : 1,
+                  cursor: filteredIncidents.length === 0 ? 'not-allowed' : 'pointer'
+                }}
+              >
+                <span style={{ fontSize: '1rem' }}>📥</span>
+                Export
+              </button>
             </div>
           </div>
 

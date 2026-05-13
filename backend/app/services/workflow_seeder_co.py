@@ -964,29 +964,13 @@ def _create_co_alarm_aico_workflow(tenant_id: str) -> WorkflowDefinition:
                 "default": "Not sure / another Aico model",
             },
         ),
-        WorkflowNode(
-            id="aico_series_model",
-            type=WorkflowNodeType.QUESTION,
-            data={
-                "group": "Aico",
-                "question": "Which Ei207 / Ei208 model is it?",
-                "variable": "aico_series_model",
-                "options": [
-                    {"label": "Ei207 / Ei207D", "score": 1},
-                    {"label": "Ei208 / Ei208W", "score": 1},
-                    {"label": "Ei208WRF", "score": 1},
-                    {"label": "Ei208DW / Ei208DWRF", "score": 1},
-                    {"label": "Not sure", "score": 1},
-                ],
-            },
-        ),
     ]
     edges = [
         WorkflowEdge(source="aico_model", target="aico_model_switch"),
         WorkflowEdge(source="aico_model_switch", target="aico3030_q1", condition="aico_model == 'Ei3030'"),
         WorkflowEdge(source="aico_model_switch", target="aico3018_q1", condition="aico_model == 'Ei3018'"),
         WorkflowEdge(source="aico_model_switch", target="aico3028_q1", condition="aico_model == 'Ei3028'"),
-        WorkflowEdge(source="aico_model_switch", target="aico_series_model", condition="aico_model == 'Ei207 / Ei208 Series'"),
+        WorkflowEdge(source="aico_model_switch", target="aico208_q1", condition="aico_model == 'Ei207 / Ei208 Series'"),
         WorkflowEdge(source="aico_model_switch", target="aicogeneric_q1", condition="aico_model == 'Not sure / another Aico model'"),
     ]
     aico3030_nodes, aico3030_edges = _build_branch(
@@ -1087,7 +1071,6 @@ def _create_co_alarm_aico_workflow(tenant_id: str) -> WorkflowDefinition:
     )
     nodes.extend(aico3030_nodes + aico3018_nodes + aico3028_nodes + aico208_nodes + aicogeneric_nodes)
     edges.extend(aico3030_edges + aico3018_edges + aico3028_edges + aico208_edges + aicogeneric_edges)
-    edges.append(WorkflowEdge(source="aico_series_model", target="aico208_q1"))
     return _build_manufacturer_workflow(tenant_id, CO_ALARM_SUBFLOW_AICO, "aico_model", nodes, edges)
 
 

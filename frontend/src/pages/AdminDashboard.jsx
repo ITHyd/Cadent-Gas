@@ -45,6 +45,49 @@ const FILTER_TO_STATUS = {
   all: null,
 };
 
+const filterCompanyIncidentsByTab = (incidents, filter) => {
+  const items = Array.isArray(incidents) ? incidents : [];
+  let filtered = [];
+
+  switch (filter) {
+    case 'new':
+      // New tab: Show most recently created portal/chatbot incidents (last 24 hours)
+      const now = new Date();
+      const twentyFourHoursAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+
+      filtered = items.filter((incident) => {
+        const isPortalIncident = !incident.external_ref || !incident.external_ref.connector_type;
+        const createdAt = new Date(incident.created_at);
+        const isRecent = createdAt >= twentyFourHoursAgo;
+
+        return isPortalIncident && isRecent;
+      });
+      break;
+    case 'in_progress':
+      filtered = items.filter((incident) => ['in_progress', 'waiting_input', 'paused'].includes(incident.status));
+      break;
+    case 'pending':
+      filtered = items.filter((incident) => incident.status === 'pending_company_action');
+      break;
+    case 'dispatched':
+      filtered = items.filter((incident) => incident.status === 'dispatched');
+      break;
+    case 'resolved':
+      filtered = items.filter((incident) => incident.status === 'resolved');
+      break;
+    case 'completed':
+      filtered = items.filter((incident) => incident.status === 'completed');
+      break;
+    case 'all':
+    default:
+      filtered = items;
+      break;
+  }
+
+  // Sort all filtered results by created_at descending (most recent first)
+  return filtered.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+};
+
 const paginationBtnStyle = {
   border: '1px solid #cbd5e1',
   background: '#fff',
@@ -117,8 +160,74 @@ const AdminDashboard = () => {
   const [availableAgents, setAvailableAgents] = useState([]);
   const [allAgents, setAllAgents] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
 
   const [mainTab, setMainTab] = useState('home');
+
+  const formatDateForExcel = (dateString) => {
+    if (!dateString) return '';
+
+    const date = new Date(dateString);
+    const day = String(date.getDate()).padStart(2, '0');
+    const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    const month = monthNames[date.getMonth()];
+    const year = date.getFullYear();
+    const hours = String(date.getHours()).padStart(2, '0');
+    const minutes = String(date.getMinutes()).padStart(2, '0');
+
+    return `${day}-${month}-${year} ${hours}:${minutes}`;
+  };
+
+  const exportIncidentsToExcel = () => {
+    if (incidents.length === 0) return;
+
+    // Sort incidents by created_at descending (latest first)
+    const sortedIncidents = [...incidents].sort((a, b) =>
+      new Date(b.created_at) - new Date(a.created_at)
+    );
+
+    // Prepare data for export
+    const exportData = sortedIncidents.map(incident => ({
+      'Reference ID': incident.reference_id || 'N/A',
+      'Incident ID': incident.incident_id,
+      'Reported By': incident.user_name || incident.user_phone || 'N/A',
+      'Workflow Classification': incident.outcome || 'Pending',
+      'KB Classification': incident.kb_match_type || 'N/A',
+      'Status': incident.status,
+      'Created At': formatDateForExcel(incident.created_at)
+    }));
+
+    // Convert to CSV
+    const headers = Object.keys(exportData[0]);
+    const csvContent = [
+      headers.join(','),
+      ...exportData.map(row =>
+        headers.map(header => {
+          const value = row[header];
+          // Escape commas and quotes in values
+          if (typeof value === 'string' && (value.includes(',') || value.includes('"'))) {
+            return `"${value.replace(/"/g, '""')}"`;
+          }
+          return value;
+        }).join(',')
+      )
+    ].join('\n');
+
+    // Create blob and download
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement('a');
+    const url = URL.createObjectURL(blob);
+
+    const timestamp = new Date().toISOString().slice(0, 10);
+    const filename = `company_incidents_${filter}_${timestamp}.csv`;
+
+    link.setAttribute('href', url);
+    link.setAttribute('download', filename);
+    link.style.visibility = 'hidden';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
   const [filter, setFilter] = useState('all');
   const [dateRange, setDateRange] = useState('30d');
   const [customStartDate, setCustomStartDate] = useState('');
@@ -166,9 +275,12 @@ const AdminDashboard = () => {
   const [toast, setToast] = useState(null);
 
   useEffect(() => {
-    setPage(1);
     fetchData();
-  }, [filter, tenantId]);
+  }, [tenantId]);
+
+  useEffect(() => {
+    setIncidents(filterCompanyIncidentsByTab(allIncidents, filter));
+  }, [allIncidents, filter]);
 
   // Auto-refresh ops data every 30s
   useEffect(() => {
@@ -180,37 +292,31 @@ const AdminDashboard = () => {
   const fetchData = async (options = {}) => {
     const { background = false } = options;
     try {
-      if (!background) setLoading(true);
+      if (background) setRefreshing(true);
+      else setLoading(true);
 
-      const status = FILTER_TO_STATUS[filter];
-
+      // Load essential data first (fast)
       const [
-        incidentsData,
         allIncidentsData,
         statsData,
         availableAgentsData,
         allAgentsData,
         opsData,
         workflowData,
-        trueKbData,
-        falseKbData,
       ] = await Promise.all([
-        getCompanyIncidents(tenantId, status),
         getCompanyIncidents(tenantId),
         getCompanyStats(tenantId),
         getAvailableAgents().catch(() => ({ agents: [] })),
         getAllAgents().catch(() => ({ agents: [] })),
         getCompanyOpsRequests(tenantId).catch(() => ({ assistance_requests: [], item_requests: [] })),
         getTenantWorkflows(tenantId).catch(() => []),
-        getTrueIncidentsKB(1, 500, tenantId).catch(() => ({ items: [] })),
-        getFalseIncidentsKB(1, 500, tenantId).catch(() => ({ items: [] })),
       ]);
 
-      setIncidents(incidentsData.incidents || []);
-      setAllIncidents(allIncidentsData.incidents || []);
+      const allLoadedIncidents = allIncidentsData.incidents || [];
+      setAllIncidents(allLoadedIncidents);
       setStats(statsData || null);
-      setKbTrueEntries(trueKbData.items || []);
-      setKbFalseEntries(falseKbData.items || []);
+      setKbTrueEntries([]);
+      setKbFalseEntries([]);
       setTenantWorkflows(Array.isArray(workflowData) ? workflowData : workflowData?.workflows || []);
       setAvailableAgents(availableAgentsData.agents || []);
       setAllAgents(allAgentsData.agents || []);
@@ -220,15 +326,27 @@ const AdminDashboard = () => {
       });
 
       if (selectedIncident) {
-        const latestSelected = (incidentsData.incidents || []).find(
+        const latestSelected = allLoadedIncidents.find(
           (incident) => incident.incident_id === selectedIncident.incident_id
         );
         setSelectedIncident(latestSelected || null);
       }
+
+      // Load KB data in background (lazy load, not blocking)
+      if (!background) {
+        Promise.all([
+          getTrueIncidentsKB(1, 100, tenantId).catch(() => ({ items: [] })),
+          getFalseIncidentsKB(1, 100, tenantId).catch(() => ({ items: [] })),
+        ]).then(([trueKbData, falseKbData]) => {
+          setKbTrueEntries(trueKbData.items || []);
+          setKbFalseEntries(falseKbData.items || []);
+        });
+      }
     } catch {
       showToast('Failed to load dashboard data', 'error');
     } finally {
-      if (!background) setLoading(false);
+      if (background) setRefreshing(false);
+      else setLoading(false);
     }
   };
 
@@ -326,8 +444,8 @@ const AdminDashboard = () => {
       if (!silent) {
         showToast('KB validation complete - review results below', 'info');
       }
-    } catch {
-      showToast('Failed to validate incident', 'error');
+    } catch (error) {
+      showToast(error?.message || 'Failed to validate incident', 'error');
     } finally {
       setKbReviewBusy('');
     }
@@ -340,8 +458,8 @@ const AdminDashboard = () => {
       showToast('Incident marked as false report - syncing to external system', 'success');
       setDetailIncident(null);
       fetchData({ background: true });
-    } catch {
-      showToast('Failed to mark incident as false report', 'error');
+    } catch (error) {
+      showToast(error?.message || 'Failed to mark incident as false report', 'error');
     } finally {
       setKbReviewBusy('');
     }
@@ -354,8 +472,8 @@ const AdminDashboard = () => {
       showToast('Incident confirmed valid - ready for agent assignment', 'success');
       setDetailIncident(null);
       fetchData({ background: true });
-    } catch {
-      showToast('Failed to confirm incident', 'error');
+    } catch (error) {
+      showToast(error?.message || 'Failed to confirm incident', 'error');
     } finally {
       setKbReviewBusy('');
     }
@@ -490,12 +608,13 @@ const AdminDashboard = () => {
   const formatDateTime = (value) => {
     if (!value) return 'N/A';
 
-    return new Date(value).toLocaleDateString('en-GB', {
+    return new Date(value).toLocaleString('en-GB', {
       day: '2-digit',
       month: 'short',
       year: 'numeric',
       hour: '2-digit',
       minute: '2-digit',
+      hour12: false
     });
   };
 
@@ -748,7 +867,7 @@ const AdminDashboard = () => {
     return map[(priority || '').toUpperCase()] || map.NORMAL;
   };
 
-  if (loading) {
+  if (loading && allIncidents.length === 0) {
     return (
       <div className="app-shell" style={{ display: 'grid', placeItems: 'center' }}>
         <div className="panel" style={{ maxWidth: '420px', width: '100%', padding: '32px', textAlign: 'center' }}>
@@ -1330,9 +1449,8 @@ const AdminDashboard = () => {
               { id: 'in_progress', label: `In Progress (${stats?.in_progress || 0})` },
               { id: 'pending', label: `Pending (${stats?.pending || 0})` },
               { id: 'dispatched', label: `Dispatched (${stats?.dispatched || 0})` },
-              { id: 'resolved', label: `Pending Review (${stats?.resolved || 0})` },
               { id: 'completed', label: `Completed (${stats?.completed || 0})` },
-              { id: 'all', label: 'All Incidents' },
+              { id: 'all', label: `All Incidents (${allIncidents.length})` },
             ].map((option) => (
               <button
                 key={option.id}
@@ -1345,9 +1463,23 @@ const AdminDashboard = () => {
             ))}
           </div>
 
-          <button type="button" className="secondary-btn" onClick={fetchData}>
-            Refresh Data
-          </button>
+          <div style={{ display: 'flex', gap: '10px' }}>
+            <button type="button" className="secondary-btn" onClick={() => fetchData({ background: true })}>
+              {refreshing ? 'Refreshing...' : 'Refresh Data'}
+            </button>
+            <button
+              type="button"
+              className="secondary-btn"
+              onClick={exportIncidentsToExcel}
+              disabled={incidents.length === 0}
+              style={{
+                opacity: incidents.length === 0 ? 0.6 : 1,
+                cursor: incidents.length === 0 ? 'not-allowed' : 'pointer'
+              }}
+            >
+              📥 Export
+            </button>
+          </div>
         </div>
 
         <div style={{ marginBottom: '14px' }}>
@@ -2225,59 +2357,60 @@ const AdminDashboard = () => {
                                       const entryKey = `result-true-${match.kb_id || idx}`;
                                       const isExpanded = expandedKbEntry === entryKey;
                                       return (
-                                      <button
-                                        type="button"
-                                        key={entryKey}
-                                        onClick={() => setExpandedKbEntry(isExpanded ? null : entryKey)}
-                                        style={{ border: '1px solid #bbf7d0', background: '#f0fdf4', borderRadius: '8px', padding: '8px 10px', textAlign: 'left', cursor: 'pointer', width: '100%' }}
-                                      >
-                                        <div style={{ display: 'flex', justifyContent: 'space-between', gap: '8px', marginBottom: '3px' }}>
-                                          <strong style={{ fontSize: '0.8rem', color: '#166534' }}>{formatKbDisplayId(match, match.incident_type || 'True incident')}</strong>
-                                          <span style={{ display: 'inline-flex', alignItems: 'center', gap: '8px' }}>
-                                            <span style={{ fontSize: '0.74rem', fontWeight: 700, color: '#047857' }}>{Math.round((match.score || 0) * 100)}%</span>
-                                            <span style={{ fontSize: '0.8rem', color: '#166534' }}>{isExpanded ? '▲' : '▼'}</span>
-                                          </span>
-                                        </div>
-                                        {match.description && <div style={{ fontSize: '0.76rem', color: '#475569' }}>{match.description}</div>}
-                                        {isExpanded && (
-                                          <div style={{ marginTop: '8px', paddingTop: '8px', borderTop: '1px solid #bbf7d0', display: 'grid', gap: '6px' }}>
-                                            {match.resolution_summary && (
-                                              <div style={{ fontSize: '0.74rem', color: '#475569' }}>
-                                                <strong style={{ color: '#166534' }}>Summary:</strong> {match.resolution_summary}
-                                              </div>
-                                            )}
-                                            {Array.isArray(match.matched_tags) && match.matched_tags.length > 0 && (
-                                              <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
-                                                {match.matched_tags.map((tag) => (
-                                                  <span key={tag} style={{ fontSize: '0.7rem', padding: '2px 8px', borderRadius: '999px', background: '#dcfce7', color: '#166534', fontWeight: 700 }}>
-                                                    {String(tag).replace(/_/g, ' ')}
-                                                  </span>
-                                                ))}
-                                              </div>
-                                            )}
-                                            {match.manufacturer && (
-                                              <div style={{ fontSize: '0.74rem', color: '#475569' }}>
-                                                <strong style={{ color: '#166534' }}>Manufacturer:</strong> {match.manufacturer}
-                                              </div>
-                                            )}
-                                            {match.model && (
-                                              <div style={{ fontSize: '0.74rem', color: '#475569' }}>
-                                                <strong style={{ color: '#166534' }}>Model:</strong> {match.model}
-                                              </div>
-                                            )}
-                                            {match.pattern_fields && Object.keys(match.pattern_fields).length > 0 && (
-                                              <div style={{ display: 'grid', gap: '4px' }}>
-                                                {Object.entries(match.pattern_fields).map(([field, value]) => (
-                                                  <div key={field} style={{ fontSize: '0.73rem', color: '#475569' }}>
-                                                    <strong style={{ color: '#166534' }}>{field.replace(/_/g, ' ')}:</strong> {String(value)}
-                                                  </div>
-                                                ))}
-                                              </div>
-                                            )}
+                                        <button
+                                          type="button"
+                                          key={entryKey}
+                                          onClick={() => setExpandedKbEntry(isExpanded ? null : entryKey)}
+                                          style={{ border: '1px solid #bbf7d0', background: '#f0fdf4', borderRadius: '8px', padding: '8px 10px', textAlign: 'left', cursor: 'pointer', width: '100%' }}
+                                        >
+                                          <div style={{ display: 'flex', justifyContent: 'space-between', gap: '8px', marginBottom: '3px' }}>
+                                            <strong style={{ fontSize: '0.8rem', color: '#166534' }}>{formatKbDisplayId(match, match.incident_type || 'True incident')}</strong>
+                                            <span style={{ display: 'inline-flex', alignItems: 'center', gap: '8px' }}>
+                                              <span style={{ fontSize: '0.74rem', fontWeight: 700, color: '#047857' }}>{Math.round((match.score || 0) * 100)}%</span>
+                                              <span style={{ fontSize: '0.8rem', color: '#166534' }}>{isExpanded ? '▲' : '▼'}</span>
+                                            </span>
                                           </div>
-                                        )}
-                                      </button>
-                                    )})}
+                                          {match.description && <div style={{ fontSize: '0.76rem', color: '#475569' }}>{match.description}</div>}
+                                          {isExpanded && (
+                                            <div style={{ marginTop: '8px', paddingTop: '8px', borderTop: '1px solid #bbf7d0', display: 'grid', gap: '6px' }}>
+                                              {match.resolution_summary && (
+                                                <div style={{ fontSize: '0.74rem', color: '#475569' }}>
+                                                  <strong style={{ color: '#166534' }}>Summary:</strong> {match.resolution_summary}
+                                                </div>
+                                              )}
+                                              {Array.isArray(match.matched_tags) && match.matched_tags.length > 0 && (
+                                                <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+                                                  {match.matched_tags.map((tag) => (
+                                                    <span key={tag} style={{ fontSize: '0.7rem', padding: '2px 8px', borderRadius: '999px', background: '#dcfce7', color: '#166534', fontWeight: 700 }}>
+                                                      {String(tag).replace(/_/g, ' ')}
+                                                    </span>
+                                                  ))}
+                                                </div>
+                                              )}
+                                              {match.manufacturer && (
+                                                <div style={{ fontSize: '0.74rem', color: '#475569' }}>
+                                                  <strong style={{ color: '#166534' }}>Manufacturer:</strong> {match.manufacturer}
+                                                </div>
+                                              )}
+                                              {match.model && (
+                                                <div style={{ fontSize: '0.74rem', color: '#475569' }}>
+                                                  <strong style={{ color: '#166534' }}>Model:</strong> {match.model}
+                                                </div>
+                                              )}
+                                              {match.pattern_fields && Object.keys(match.pattern_fields).length > 0 && (
+                                                <div style={{ display: 'grid', gap: '4px' }}>
+                                                  {Object.entries(match.pattern_fields).map(([field, value]) => (
+                                                    <div key={field} style={{ fontSize: '0.73rem', color: '#475569' }}>
+                                                      <strong style={{ color: '#166534' }}>{field.replace(/_/g, ' ')}:</strong> {String(value)}
+                                                    </div>
+                                                  ))}
+                                                </div>
+                                              )}
+                                            </div>
+                                          )}
+                                        </button>
+                                      )
+                                    })}
                                   </div>
                                 </details>
                               )}
@@ -2292,59 +2425,60 @@ const AdminDashboard = () => {
                                       const entryKey = `result-false-${match.kb_id || idx}`;
                                       const isExpanded = expandedKbEntry === entryKey;
                                       return (
-                                      <button
-                                        type="button"
-                                        key={entryKey}
-                                        onClick={() => setExpandedKbEntry(isExpanded ? null : entryKey)}
-                                        style={{ border: '1px solid #fecaca', background: '#fef2f2', borderRadius: '8px', padding: '8px 10px', textAlign: 'left', cursor: 'pointer', width: '100%' }}
-                                      >
-                                        <div style={{ display: 'flex', justifyContent: 'space-between', gap: '8px', marginBottom: '3px' }}>
-                                          <strong style={{ fontSize: '0.8rem', color: '#991b1b' }}>{formatKbDisplayId(match, match.incident_type || 'False report')}</strong>
-                                          <span style={{ display: 'inline-flex', alignItems: 'center', gap: '8px' }}>
-                                            <span style={{ fontSize: '0.74rem', fontWeight: 700, color: '#b91c1c' }}>{Math.round((match.score || 0) * 100)}%</span>
-                                            <span style={{ fontSize: '0.8rem', color: '#991b1b' }}>{isExpanded ? '▲' : '▼'}</span>
-                                          </span>
-                                        </div>
-                                        {match.description && <div style={{ fontSize: '0.76rem', color: '#475569' }}>{match.description}</div>}
-                                        {isExpanded && (
-                                          <div style={{ marginTop: '8px', paddingTop: '8px', borderTop: '1px solid #fecaca', display: 'grid', gap: '6px' }}>
-                                            {match.resolution_summary && (
-                                              <div style={{ fontSize: '0.74rem', color: '#475569' }}>
-                                                <strong style={{ color: '#991b1b' }}>Summary:</strong> {match.resolution_summary}
-                                              </div>
-                                            )}
-                                            {Array.isArray(match.matched_tags) && match.matched_tags.length > 0 && (
-                                              <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
-                                                {match.matched_tags.map((tag) => (
-                                                  <span key={tag} style={{ fontSize: '0.7rem', padding: '2px 8px', borderRadius: '999px', background: '#fee2e2', color: '#991b1b', fontWeight: 700 }}>
-                                                    {String(tag).replace(/_/g, ' ')}
-                                                  </span>
-                                                ))}
-                                              </div>
-                                            )}
-                                            {match.manufacturer && (
-                                              <div style={{ fontSize: '0.74rem', color: '#475569' }}>
-                                                <strong style={{ color: '#991b1b' }}>Manufacturer:</strong> {match.manufacturer}
-                                              </div>
-                                            )}
-                                            {match.model && (
-                                              <div style={{ fontSize: '0.74rem', color: '#475569' }}>
-                                                <strong style={{ color: '#991b1b' }}>Model:</strong> {match.model}
-                                              </div>
-                                            )}
-                                            {match.pattern_fields && Object.keys(match.pattern_fields).length > 0 && (
-                                              <div style={{ display: 'grid', gap: '4px' }}>
-                                                {Object.entries(match.pattern_fields).map(([field, value]) => (
-                                                  <div key={field} style={{ fontSize: '0.73rem', color: '#475569' }}>
-                                                    <strong style={{ color: '#991b1b' }}>{field.replace(/_/g, ' ')}:</strong> {String(value)}
-                                                  </div>
-                                                ))}
-                                              </div>
-                                            )}
+                                        <button
+                                          type="button"
+                                          key={entryKey}
+                                          onClick={() => setExpandedKbEntry(isExpanded ? null : entryKey)}
+                                          style={{ border: '1px solid #fecaca', background: '#fef2f2', borderRadius: '8px', padding: '8px 10px', textAlign: 'left', cursor: 'pointer', width: '100%' }}
+                                        >
+                                          <div style={{ display: 'flex', justifyContent: 'space-between', gap: '8px', marginBottom: '3px' }}>
+                                            <strong style={{ fontSize: '0.8rem', color: '#991b1b' }}>{formatKbDisplayId(match, match.incident_type || 'False report')}</strong>
+                                            <span style={{ display: 'inline-flex', alignItems: 'center', gap: '8px' }}>
+                                              <span style={{ fontSize: '0.74rem', fontWeight: 700, color: '#b91c1c' }}>{Math.round((match.score || 0) * 100)}%</span>
+                                              <span style={{ fontSize: '0.8rem', color: '#991b1b' }}>{isExpanded ? '▲' : '▼'}</span>
+                                            </span>
                                           </div>
-                                        )}
-                                      </button>
-                                    )})}
+                                          {match.description && <div style={{ fontSize: '0.76rem', color: '#475569' }}>{match.description}</div>}
+                                          {isExpanded && (
+                                            <div style={{ marginTop: '8px', paddingTop: '8px', borderTop: '1px solid #fecaca', display: 'grid', gap: '6px' }}>
+                                              {match.resolution_summary && (
+                                                <div style={{ fontSize: '0.74rem', color: '#475569' }}>
+                                                  <strong style={{ color: '#991b1b' }}>Summary:</strong> {match.resolution_summary}
+                                                </div>
+                                              )}
+                                              {Array.isArray(match.matched_tags) && match.matched_tags.length > 0 && (
+                                                <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+                                                  {match.matched_tags.map((tag) => (
+                                                    <span key={tag} style={{ fontSize: '0.7rem', padding: '2px 8px', borderRadius: '999px', background: '#fee2e2', color: '#991b1b', fontWeight: 700 }}>
+                                                      {String(tag).replace(/_/g, ' ')}
+                                                    </span>
+                                                  ))}
+                                                </div>
+                                              )}
+                                              {match.manufacturer && (
+                                                <div style={{ fontSize: '0.74rem', color: '#475569' }}>
+                                                  <strong style={{ color: '#991b1b' }}>Manufacturer:</strong> {match.manufacturer}
+                                                </div>
+                                              )}
+                                              {match.model && (
+                                                <div style={{ fontSize: '0.74rem', color: '#475569' }}>
+                                                  <strong style={{ color: '#991b1b' }}>Model:</strong> {match.model}
+                                                </div>
+                                              )}
+                                              {match.pattern_fields && Object.keys(match.pattern_fields).length > 0 && (
+                                                <div style={{ display: 'grid', gap: '4px' }}>
+                                                  {Object.entries(match.pattern_fields).map(([field, value]) => (
+                                                    <div key={field} style={{ fontSize: '0.73rem', color: '#475569' }}>
+                                                      <strong style={{ color: '#991b1b' }}>{field.replace(/_/g, ' ')}:</strong> {String(value)}
+                                                    </div>
+                                                  ))}
+                                                </div>
+                                              )}
+                                            </div>
+                                          )}
+                                        </button>
+                                      )
+                                    })}
                                   </div>
                                 </details>
                               )}
@@ -2423,12 +2557,12 @@ const AdminDashboard = () => {
                                 ? '#166534'
                                 : '#1d4ed8';
                           return (
-                          <div>
-                            <span style={{ color: '#64748b' }}>KB Verdict:</span>{' '}
-                            <strong style={{ color: verdictColor }}>
-                              {verdictLabel}
-                            </strong>
-                          </div>
+                            <div>
+                              <span style={{ color: '#64748b' }}>KB Verdict:</span>{' '}
+                              <strong style={{ color: verdictColor }}>
+                                {verdictLabel}
+                              </strong>
+                            </div>
                           );
                         })()}
                         {inc.kb_similarity_score != null && (
@@ -2587,20 +2721,20 @@ const AdminDashboard = () => {
                             {reviewPrompt}
                           </div>
                           <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-                          {normalizedVerdict !== 'true' && (
-                            <button type="button" className="secondary-btn" disabled={Boolean(kbReviewBusy)} style={{ fontSize: '0.78rem', padding: '6px 14px', borderColor: '#86efac', color: '#047857', background: '#ecfdf5', fontWeight: 700, cursor: kbReviewBusy ? 'not-allowed' : 'pointer', opacity: kbReviewBusy && kbReviewBusy !== 'confirm' ? 0.65 : 1 }} onClick={() => handleConfirmValid(inc.incident_id)}>
-                              Confirm True Incident
+                            {normalizedVerdict !== 'true' && (
+                              <button type="button" className="secondary-btn" disabled={Boolean(kbReviewBusy)} style={{ fontSize: '0.78rem', padding: '6px 14px', borderColor: '#86efac', color: '#047857', background: '#ecfdf5', fontWeight: 700, cursor: kbReviewBusy ? 'not-allowed' : 'pointer', opacity: kbReviewBusy && kbReviewBusy !== 'confirm' ? 0.65 : 1 }} onClick={() => handleConfirmValid(inc.incident_id)}>
+                                Confirm True Incident
+                              </button>
+                            )}
+                            {normalizedVerdict !== 'false' && (
+                              <button type="button" className="secondary-btn" disabled={Boolean(kbReviewBusy)} style={{ fontSize: '0.78rem', padding: '6px 14px', borderColor: '#fca5a5', color: '#b91c1c', background: '#fff5f5', fontWeight: 700, cursor: kbReviewBusy ? 'not-allowed' : 'pointer', opacity: kbReviewBusy && kbReviewBusy !== 'false' ? 0.65 : 1 }} onClick={() => handleMarkFalse(inc.incident_id)}>
+                                Mark as False Report
+                              </button>
+                            )}
+                            <button type="button" className="secondary-btn" disabled={Boolean(kbReviewBusy)} style={{ fontSize: '0.78rem', padding: '6px 14px', borderColor: '#93c5fd', color: '#1d4ed8', background: '#eff6ff', fontWeight: 700, cursor: kbReviewBusy ? 'not-allowed' : 'pointer', opacity: kbReviewBusy && kbReviewBusy !== 'validate' ? 0.65 : 1 }} onClick={() => handleValidate(inc.incident_id, { silent: true, keepModalOpen: true })}>
+                              Re-validate
                             </button>
-                          )}
-                          {normalizedVerdict !== 'false' && (
-                            <button type="button" className="secondary-btn" disabled={Boolean(kbReviewBusy)} style={{ fontSize: '0.78rem', padding: '6px 14px', borderColor: '#fca5a5', color: '#b91c1c', background: '#fff5f5', fontWeight: 700, cursor: kbReviewBusy ? 'not-allowed' : 'pointer', opacity: kbReviewBusy && kbReviewBusy !== 'false' ? 0.65 : 1 }} onClick={() => handleMarkFalse(inc.incident_id)}>
-                              Mark as False Report
-                            </button>
-                          )}
-                          <button type="button" className="secondary-btn" disabled={Boolean(kbReviewBusy)} style={{ fontSize: '0.78rem', padding: '6px 14px', borderColor: '#93c5fd', color: '#1d4ed8', background: '#eff6ff', fontWeight: 700, cursor: kbReviewBusy ? 'not-allowed' : 'pointer', opacity: kbReviewBusy && kbReviewBusy !== 'validate' ? 0.65 : 1 }} onClick={() => handleValidate(inc.incident_id, { silent: true, keepModalOpen: true })}>
-                            Re-validate
-                          </button>
-                        </div>
+                          </div>
                         </div>
                       )}
                     </div>

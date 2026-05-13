@@ -859,6 +859,7 @@ class IncidentService:
         structured_data: Optional[Dict[str, Any]] = None,
         reference_id: Optional[str] = None,
         reported_by_staff_id: Optional[str] = None,
+        created_at: Optional[datetime] = None,
     ) -> Incident:
         """
         Create a new incident
@@ -874,11 +875,15 @@ class IncidentService:
             location: Location description
             geo_location: {"lat": float, "lng": float}
             structured_data: Extracted structured variables
+            created_at: Custom creation timestamp (defaults to current time)
         
         Returns:
             Created Incident object
         """
         incident_id = self._incident_id_from_reference_id(reference_id) or self._next_incident_id()
+        
+        # Use provided timestamp or current UTC time (for consistency across timezones)
+        creation_time = created_at if created_at else datetime.utcnow()
         
         incident = Incident(
             incident_id=incident_id,
@@ -898,7 +903,7 @@ class IncidentService:
             structured_data=structured_data or {},
             status_history=[{
                 "status": "reported",
-                "timestamp": datetime.utcnow().isoformat(),
+                "timestamp": creation_time.isoformat(),
                 "message": (
                     f"Incident reported by staff {reported_by_staff_id} on behalf of user"
                     if reported_by_staff_id
@@ -912,8 +917,8 @@ class IncidentService:
             backup_agents=[],
             agent_location_history=[],
             media=[],
-            created_at=datetime.utcnow(),
-            updated_at=datetime.utcnow()
+            created_at=creation_time,
+            updated_at=creation_time
         )
 
         self.incidents[incident_id] = incident
@@ -1729,12 +1734,14 @@ class IncidentService:
     def _matches_connector_scope(incident: "Incident", scope: List[str]) -> bool:
         """Check if an incident matches the user's connector scope.
 
-        - external_ref is None (portal/chatbot incident) → matches if "portal" in scope
+        - external_ref is None (portal/chatbot incident) → ALWAYS matches (portal incidents always visible)
         - external_ref.connector_type present → matches if that type is in scope
         """
         ext_ref = incident.external_ref
+        # Portal/chatbot incidents (no external_ref) are ALWAYS visible
         if ext_ref is None or not ext_ref.get("connector_type"):
-            return "portal" in scope
+            return True
+        # Connector incidents only visible if in scope
         return ext_ref.get("connector_type") in scope
 
     def get_company_incidents(
@@ -1934,9 +1941,16 @@ class IncidentService:
         ]
         
         total = len(tenant_incidents)
-        new_count = sum(1 for inc in tenant_incidents if inc.status in (
-            IncidentStatus.NEW, IncidentStatus.CLASSIFYING, IncidentStatus.ANALYZING,
-        ))
+        
+        # NEW count: Portal/chatbot incidents created in last 24 hours
+        now = datetime.utcnow()
+        twenty_four_hours_ago = now - timedelta(hours=24)
+        new_count = sum(
+            1 for inc in tenant_incidents 
+            if (inc.external_ref is None or not inc.external_ref.get("connector_type"))
+            and inc.created_at >= twenty_four_hours_ago
+        )
+        
         in_progress = sum(1 for inc in tenant_incidents if inc.status in (
             IncidentStatus.IN_PROGRESS, IncidentStatus.WAITING_INPUT, IncidentStatus.PAUSED,
         ))

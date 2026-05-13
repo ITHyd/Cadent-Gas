@@ -71,7 +71,11 @@ const FieldAgentDashboard = () => {
       if (showLoading) setLoading(true);
       const statusParam = filterStatus !== 'all' ? filterStatus : null;
       const data = await getAgentIncidents(agentId, statusParam);
-      setIncidents(data.incidents || []);
+      // Sort incidents by created_at descending (latest first)
+      const sortedIncidents = (data.incidents || []).sort((a, b) =>
+        new Date(b.created_at) - new Date(a.created_at)
+      );
+      setIncidents(sortedIncidents);
       setLastSyncedAt(new Date());
     } catch {
       // silently handled

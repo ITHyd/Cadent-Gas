@@ -304,6 +304,7 @@ async def delete_kb_entry(
 async def search_kb(
     query: str = Query(..., min_length=1),
     kb_type: Optional[str] = Query(None),
+    page: int = Query(1, ge=1),
     limit: int = Query(10, ge=1, le=50),
     tenant_id: Optional[str] = Query(None),
     orchestrator: AgentOrchestrator = Depends(get_orchestrator),
@@ -315,17 +316,26 @@ async def search_kb(
     Args:
         query: Search text
         kb_type: "true" or "false" or None for both
+        page: Page number (1-indexed)
         limit: Max results (default 10)
     """
     try:
         scoped_tenant = _resolve_tenant_scope(current_user, tenant_id)
-        results = orchestrator.search_kb(query, kb_type, limit)
-        if scoped_tenant:
-            results = [r for r in results if r.get("tenant_id") in (None, scoped_tenant)]
+        offset = (page - 1) * limit
+        result = orchestrator.kb_service.search_kb(
+            query=query,
+            kb_type=kb_type,
+            limit=limit,
+            offset=offset,
+            tenant_id=scoped_tenant,
+        )
         return {
             "query": query,
-            "total": len(results),
-            "results": results
+            "total": result["total"],
+            "results": result["items"],
+            "page": result["page"],
+            "pages": result["pages"],
+            "limit": result["limit"],
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

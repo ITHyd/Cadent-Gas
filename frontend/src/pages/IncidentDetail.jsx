@@ -299,7 +299,14 @@ const IncidentDetail = () => {
   /* ── Format Helpers ──────────────────────────────────────────── */
   const formatDate = (ds) => {
     if (!ds) return '';
-    return new Date(ds).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+    return new Date(ds).toLocaleString('en-GB', {
+      day: '2-digit',
+      month: 'short',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false
+    });
   };
 
   const formatTimeAgo = (ds) => {
@@ -1284,59 +1291,60 @@ const IncidentDetail = () => {
                                     const entryKey = `true-${match.kb_id || idx}`;
                                     const isExpanded = expandedKbMatch === entryKey;
                                     return (
-                                    <button
-                                      type="button"
-                                      key={entryKey}
-                                      onClick={() => setExpandedKbMatch(isExpanded ? null : entryKey)}
-                                      style={{ padding: '8px 10px', borderRadius: '8px', border: '1px solid #bbf7d0', background: '#f0fdf4', textAlign: 'left', width: '100%', cursor: 'pointer' }}
-                                    >
-                                      <div style={{ display: 'flex', justifyContent: 'space-between', gap: '8px' }}>
-                                        <strong style={{ fontSize: '0.8rem', color: '#166534' }}>{formatKbDisplayId(match, match.incident_type || 'True incident')}</strong>
-                                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: '8px' }}>
-                                          <span style={{ fontSize: '0.75rem', color: '#047857', fontWeight: 700 }}>{Math.round((match.score || 0) * 100)}%</span>
-                                          <span style={{ fontSize: '0.8rem', color: '#166534' }}>{isExpanded ? '▲' : '▼'}</span>
-                                        </span>
-                                      </div>
-                                      {match.description && <div style={{ fontSize: '0.76rem', color: T.textMuted, marginTop: '3px' }}>{match.description}</div>}
-                                      {isExpanded && (
-                                        <div style={{ marginTop: '8px', paddingTop: '8px', borderTop: '1px solid #bbf7d0', display: 'grid', gap: '6px' }}>
-                                          {match.resolution_summary && (
-                                            <div style={{ fontSize: '0.74rem', color: T.textMuted }}>
-                                              <strong style={{ color: '#166534' }}>Summary:</strong> {match.resolution_summary}
-                                            </div>
-                                          )}
-                                          {Array.isArray(match.matched_tags) && match.matched_tags.length > 0 && (
-                                            <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
-                                              {match.matched_tags.map((tag) => (
-                                                <span key={tag} style={{ fontSize: '0.7rem', padding: '2px 8px', borderRadius: '999px', background: '#dcfce7', color: '#166534', fontWeight: 700 }}>
-                                                  {String(tag).replace(/_/g, ' ')}
-                                                </span>
-                                              ))}
-                                            </div>
-                                          )}
-                                          {match.manufacturer && (
-                                            <div style={{ fontSize: '0.74rem', color: T.textMuted }}>
-                                              <strong style={{ color: '#166534' }}>Manufacturer:</strong> {match.manufacturer}
-                                            </div>
-                                          )}
-                                          {match.model && (
-                                            <div style={{ fontSize: '0.74rem', color: T.textMuted }}>
-                                              <strong style={{ color: '#166534' }}>Model:</strong> {match.model}
-                                            </div>
-                                          )}
-                                          {match.pattern_fields && Object.keys(match.pattern_fields).length > 0 && (
-                                            <div style={{ display: 'grid', gap: '4px' }}>
-                                              {Object.entries(match.pattern_fields).map(([field, value]) => (
-                                                <div key={field} style={{ fontSize: '0.73rem', color: T.textMuted }}>
-                                                  <strong style={{ color: '#166534' }}>{field.replace(/_/g, ' ')}:</strong> {String(value)}
-                                                </div>
-                                              ))}
-                                            </div>
-                                          )}
+                                      <button
+                                        type="button"
+                                        key={entryKey}
+                                        onClick={() => setExpandedKbMatch(isExpanded ? null : entryKey)}
+                                        style={{ padding: '8px 10px', borderRadius: '8px', border: '1px solid #bbf7d0', background: '#f0fdf4', textAlign: 'left', width: '100%', cursor: 'pointer' }}
+                                      >
+                                        <div style={{ display: 'flex', justifyContent: 'space-between', gap: '8px' }}>
+                                          <strong style={{ fontSize: '0.8rem', color: '#166534' }}>{formatKbDisplayId(match, match.incident_type || 'True incident')}</strong>
+                                          <span style={{ display: 'inline-flex', alignItems: 'center', gap: '8px' }}>
+                                            <span style={{ fontSize: '0.75rem', color: '#047857', fontWeight: 700 }}>{Math.round((match.score || 0) * 100)}%</span>
+                                            <span style={{ fontSize: '0.8rem', color: '#166534' }}>{isExpanded ? '▲' : '▼'}</span>
+                                          </span>
                                         </div>
-                                      )}
-                                    </button>
-                                  )})}
+                                        {match.description && <div style={{ fontSize: '0.76rem', color: T.textMuted, marginTop: '3px' }}>{match.description}</div>}
+                                        {isExpanded && (
+                                          <div style={{ marginTop: '8px', paddingTop: '8px', borderTop: '1px solid #bbf7d0', display: 'grid', gap: '6px' }}>
+                                            {match.resolution_summary && (
+                                              <div style={{ fontSize: '0.74rem', color: T.textMuted }}>
+                                                <strong style={{ color: '#166534' }}>Summary:</strong> {match.resolution_summary}
+                                              </div>
+                                            )}
+                                            {Array.isArray(match.matched_tags) && match.matched_tags.length > 0 && (
+                                              <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+                                                {match.matched_tags.map((tag) => (
+                                                  <span key={tag} style={{ fontSize: '0.7rem', padding: '2px 8px', borderRadius: '999px', background: '#dcfce7', color: '#166534', fontWeight: 700 }}>
+                                                    {String(tag).replace(/_/g, ' ')}
+                                                  </span>
+                                                ))}
+                                              </div>
+                                            )}
+                                            {match.manufacturer && (
+                                              <div style={{ fontSize: '0.74rem', color: T.textMuted }}>
+                                                <strong style={{ color: '#166534' }}>Manufacturer:</strong> {match.manufacturer}
+                                              </div>
+                                            )}
+                                            {match.model && (
+                                              <div style={{ fontSize: '0.74rem', color: T.textMuted }}>
+                                                <strong style={{ color: '#166534' }}>Model:</strong> {match.model}
+                                              </div>
+                                            )}
+                                            {match.pattern_fields && Object.keys(match.pattern_fields).length > 0 && (
+                                              <div style={{ display: 'grid', gap: '4px' }}>
+                                                {Object.entries(match.pattern_fields).map(([field, value]) => (
+                                                  <div key={field} style={{ fontSize: '0.73rem', color: T.textMuted }}>
+                                                    <strong style={{ color: '#166534' }}>{field.replace(/_/g, ' ')}:</strong> {String(value)}
+                                                  </div>
+                                                ))}
+                                              </div>
+                                            )}
+                                          </div>
+                                        )}
+                                      </button>
+                                    )
+                                  })}
                                 </div>
                               </details>
                             )}
@@ -1351,59 +1359,60 @@ const IncidentDetail = () => {
                                     const entryKey = `false-${match.kb_id || idx}`;
                                     const isExpanded = expandedKbMatch === entryKey;
                                     return (
-                                    <button
-                                      type="button"
-                                      key={entryKey}
-                                      onClick={() => setExpandedKbMatch(isExpanded ? null : entryKey)}
-                                      style={{ padding: '8px 10px', borderRadius: '8px', border: '1px solid #fecaca', background: '#fef2f2', textAlign: 'left', width: '100%', cursor: 'pointer' }}
-                                    >
-                                      <div style={{ display: 'flex', justifyContent: 'space-between', gap: '8px' }}>
-                                        <strong style={{ fontSize: '0.8rem', color: '#991b1b' }}>{formatKbDisplayId(match, match.incident_type || 'False report')}</strong>
-                                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: '8px' }}>
-                                          <span style={{ fontSize: '0.75rem', color: '#b91c1c', fontWeight: 700 }}>{Math.round((match.score || 0) * 100)}%</span>
-                                          <span style={{ fontSize: '0.8rem', color: '#991b1b' }}>{isExpanded ? '▲' : '▼'}</span>
-                                        </span>
-                                      </div>
-                                      {match.description && <div style={{ fontSize: '0.76rem', color: T.textMuted, marginTop: '3px' }}>{match.description}</div>}
-                                      {isExpanded && (
-                                        <div style={{ marginTop: '8px', paddingTop: '8px', borderTop: '1px solid #fecaca', display: 'grid', gap: '6px' }}>
-                                          {match.resolution_summary && (
-                                            <div style={{ fontSize: '0.74rem', color: T.textMuted }}>
-                                              <strong style={{ color: '#991b1b' }}>Summary:</strong> {match.resolution_summary}
-                                            </div>
-                                          )}
-                                          {Array.isArray(match.matched_tags) && match.matched_tags.length > 0 && (
-                                            <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
-                                              {match.matched_tags.map((tag) => (
-                                                <span key={tag} style={{ fontSize: '0.7rem', padding: '2px 8px', borderRadius: '999px', background: '#fee2e2', color: '#991b1b', fontWeight: 700 }}>
-                                                  {String(tag).replace(/_/g, ' ')}
-                                                </span>
-                                              ))}
-                                            </div>
-                                          )}
-                                          {match.manufacturer && (
-                                            <div style={{ fontSize: '0.74rem', color: T.textMuted }}>
-                                              <strong style={{ color: '#991b1b' }}>Manufacturer:</strong> {match.manufacturer}
-                                            </div>
-                                          )}
-                                          {match.model && (
-                                            <div style={{ fontSize: '0.74rem', color: T.textMuted }}>
-                                              <strong style={{ color: '#991b1b' }}>Model:</strong> {match.model}
-                                            </div>
-                                          )}
-                                          {match.pattern_fields && Object.keys(match.pattern_fields).length > 0 && (
-                                            <div style={{ display: 'grid', gap: '4px' }}>
-                                              {Object.entries(match.pattern_fields).map(([field, value]) => (
-                                                <div key={field} style={{ fontSize: '0.73rem', color: T.textMuted }}>
-                                                  <strong style={{ color: '#991b1b' }}>{field.replace(/_/g, ' ')}:</strong> {String(value)}
-                                                </div>
-                                              ))}
-                                            </div>
-                                          )}
+                                      <button
+                                        type="button"
+                                        key={entryKey}
+                                        onClick={() => setExpandedKbMatch(isExpanded ? null : entryKey)}
+                                        style={{ padding: '8px 10px', borderRadius: '8px', border: '1px solid #fecaca', background: '#fef2f2', textAlign: 'left', width: '100%', cursor: 'pointer' }}
+                                      >
+                                        <div style={{ display: 'flex', justifyContent: 'space-between', gap: '8px' }}>
+                                          <strong style={{ fontSize: '0.8rem', color: '#991b1b' }}>{formatKbDisplayId(match, match.incident_type || 'False report')}</strong>
+                                          <span style={{ display: 'inline-flex', alignItems: 'center', gap: '8px' }}>
+                                            <span style={{ fontSize: '0.75rem', color: '#b91c1c', fontWeight: 700 }}>{Math.round((match.score || 0) * 100)}%</span>
+                                            <span style={{ fontSize: '0.8rem', color: '#991b1b' }}>{isExpanded ? '▲' : '▼'}</span>
+                                          </span>
                                         </div>
-                                      )}
-                                    </button>
-                                  )})}
+                                        {match.description && <div style={{ fontSize: '0.76rem', color: T.textMuted, marginTop: '3px' }}>{match.description}</div>}
+                                        {isExpanded && (
+                                          <div style={{ marginTop: '8px', paddingTop: '8px', borderTop: '1px solid #fecaca', display: 'grid', gap: '6px' }}>
+                                            {match.resolution_summary && (
+                                              <div style={{ fontSize: '0.74rem', color: T.textMuted }}>
+                                                <strong style={{ color: '#991b1b' }}>Summary:</strong> {match.resolution_summary}
+                                              </div>
+                                            )}
+                                            {Array.isArray(match.matched_tags) && match.matched_tags.length > 0 && (
+                                              <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+                                                {match.matched_tags.map((tag) => (
+                                                  <span key={tag} style={{ fontSize: '0.7rem', padding: '2px 8px', borderRadius: '999px', background: '#fee2e2', color: '#991b1b', fontWeight: 700 }}>
+                                                    {String(tag).replace(/_/g, ' ')}
+                                                  </span>
+                                                ))}
+                                              </div>
+                                            )}
+                                            {match.manufacturer && (
+                                              <div style={{ fontSize: '0.74rem', color: T.textMuted }}>
+                                                <strong style={{ color: '#991b1b' }}>Manufacturer:</strong> {match.manufacturer}
+                                              </div>
+                                            )}
+                                            {match.model && (
+                                              <div style={{ fontSize: '0.74rem', color: T.textMuted }}>
+                                                <strong style={{ color: '#991b1b' }}>Model:</strong> {match.model}
+                                              </div>
+                                            )}
+                                            {match.pattern_fields && Object.keys(match.pattern_fields).length > 0 && (
+                                              <div style={{ display: 'grid', gap: '4px' }}>
+                                                {Object.entries(match.pattern_fields).map(([field, value]) => (
+                                                  <div key={field} style={{ fontSize: '0.73rem', color: T.textMuted }}>
+                                                    <strong style={{ color: '#991b1b' }}>{field.replace(/_/g, ' ')}:</strong> {String(value)}
+                                                  </div>
+                                                ))}
+                                              </div>
+                                            )}
+                                          </div>
+                                        )}
+                                      </button>
+                                    )
+                                  })}
                                 </div>
                               </details>
                             )}
@@ -1413,64 +1422,64 @@ const IncidentDetail = () => {
                                   {reviewPrompt}
                                 </div>
                                 <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-                                {!isTrue && (
+                                  {!isTrue && (
+                                    <button
+                                      type="button"
+                                      onClick={handleKbConfirmValid}
+                                      disabled={Boolean(kbReviewBusy)}
+                                      style={{
+                                        minHeight: '34px',
+                                        padding: '7px 12px',
+                                        borderRadius: '8px',
+                                        border: '1px solid #86efac',
+                                        background: '#ecfdf5',
+                                        color: '#047857',
+                                        fontSize: '0.78rem',
+                                        fontWeight: '700',
+                                        cursor: kbReviewBusy ? 'not-allowed' : 'pointer',
+                                        opacity: kbReviewBusy && kbReviewBusy !== 'confirm' ? 0.65 : 1,
+                                      }}
+                                    >
+                                      Confirm True Incident
+                                    </button>
+                                  )}
+                                  {!isFalse && (
+                                    <button
+                                      type="button"
+                                      onClick={handleKbMarkFalse}
+                                      disabled={Boolean(kbReviewBusy)}
+                                      style={{
+                                        minHeight: '34px',
+                                        padding: '7px 12px',
+                                        borderRadius: '8px',
+                                        border: '1px solid #fca5a5',
+                                        background: '#fef2f2',
+                                        color: '#b91c1c',
+                                        fontSize: '0.78rem',
+                                        fontWeight: '700',
+                                        cursor: kbReviewBusy ? 'not-allowed' : 'pointer',
+                                        opacity: kbReviewBusy && kbReviewBusy !== 'false' ? 0.65 : 1,
+                                      }}
+                                    >
+                                      Mark False Report
+                                    </button>
+                                  )}
                                   <button
                                     type="button"
-                                    onClick={handleKbConfirmValid}
+                                    onClick={handleKbRevalidate}
                                     disabled={Boolean(kbReviewBusy)}
                                     style={{
                                       minHeight: '34px',
                                       padding: '7px 12px',
                                       borderRadius: '8px',
-                                      border: '1px solid #86efac',
-                                      background: '#ecfdf5',
-                                      color: '#047857',
+                                      border: '1px solid #bfdbfe',
+                                      background: '#eff6ff',
+                                      color: '#1d4ed8',
                                       fontSize: '0.78rem',
                                       fontWeight: '700',
                                       cursor: kbReviewBusy ? 'not-allowed' : 'pointer',
-                                      opacity: kbReviewBusy && kbReviewBusy !== 'confirm' ? 0.65 : 1,
+                                      opacity: kbReviewBusy && kbReviewBusy !== 'validate' ? 0.65 : 1,
                                     }}
-                                  >
-                                    Confirm True Incident
-                                  </button>
-                                )}
-                                {!isFalse && (
-                                  <button
-                                    type="button"
-                                    onClick={handleKbMarkFalse}
-                                    disabled={Boolean(kbReviewBusy)}
-                                    style={{
-                                      minHeight: '34px',
-                                      padding: '7px 12px',
-                                      borderRadius: '8px',
-                                      border: '1px solid #fca5a5',
-                                      background: '#fef2f2',
-                                      color: '#b91c1c',
-                                      fontSize: '0.78rem',
-                                      fontWeight: '700',
-                                      cursor: kbReviewBusy ? 'not-allowed' : 'pointer',
-                                      opacity: kbReviewBusy && kbReviewBusy !== 'false' ? 0.65 : 1,
-                                    }}
-                                  >
-                                    Mark False Report
-                                  </button>
-                                )}
-                                <button
-                                  type="button"
-                                  onClick={handleKbRevalidate}
-                                  disabled={Boolean(kbReviewBusy)}
-                                  style={{
-                                    minHeight: '34px',
-                                    padding: '7px 12px',
-                                    borderRadius: '8px',
-                                    border: '1px solid #bfdbfe',
-                                    background: '#eff6ff',
-                                    color: '#1d4ed8',
-                                    fontSize: '0.78rem',
-                                    fontWeight: '700',
-                                    cursor: kbReviewBusy ? 'not-allowed' : 'pointer',
-                                    opacity: kbReviewBusy && kbReviewBusy !== 'validate' ? 0.65 : 1,
-                                  }}
                                   >
                                     Re-validate
                                   </button>

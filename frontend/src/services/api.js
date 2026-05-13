@@ -703,9 +703,14 @@ export const deleteKBEntry = async (kbType, kbId) => {
   return response.json();
 };
 
-export const searchKB = async (query, kbType = null, limit = 10) => {
-  const params = new URLSearchParams({ query, limit: limit.toString() });
+export const searchKB = async (query, kbType = null, limit = 10, page = 1, tenantId = null) => {
+  const params = new URLSearchParams({
+    query,
+    limit: limit.toString(),
+    page: page.toString(),
+  });
   if (kbType) params.append('kb_type', kbType);
+  if (tenantId) params.append('tenant_id', tenantId);
 
   const response = await authFetch(`${API_BASE_URL}/api/v1/kb/search?${params}`);
   if (!response.ok) throw new Error('Failed to search KB');

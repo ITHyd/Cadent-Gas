@@ -119,18 +119,6 @@ ehthumbs.db
 Thumbs.db
 desktop.ini
 
-# Uploads
-uploads/
-*.jpg
-*.jpeg
-*.png
-*.gif
-*.mp4
-*.webm
-*.wav
-*.mp3
-*.m4a
-
 # ML Models
 *.pt
 *.pth
