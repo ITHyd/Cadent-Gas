@@ -41,7 +41,8 @@ services:
         VITE_WS_URL: ""
     restart: unless-stopped
     ports:
-      - "4444:80"
+      - "149.102.158.71:8070:80"    # HTTP (proxied by FIKA nginx for cadent.nxzen.com)
+      - "4444:80"                    # Legacy port (kept for backward compatibility)
     depends_on:
       - backend
 
